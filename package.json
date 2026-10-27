@@ -1,0 +1,15 @@
+{
+  "name": "ai-bridge",
+  "version": "0.3.0",
+  "private": true,
+  "description": "macOS desktop bridge for collaboration between AI coding tools",
+  "type": "module",
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "scripts": {
+    "start": "node control.mjs",
+    "test": "node --test *.test.mjs",
+    "build": "zsh build-app.sh 'dist/AI Bridge.app'"
+  }
+}

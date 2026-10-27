@@ -1,0 +1,23 @@
+.DS_Store
+/node_modules/
+/dist/
+*.app/
+*.zip
+*.dmg
+
+# Local runtime data and credentials
+/.bridge-state/
+/.bridge-connections/
+/connections/
+/host/
+/native-runtime.json
+/native-inbox.lock*
+/native-questions.json*
+/workspace.sqlite*
+/agents-cache.json
+/incoming-map.json
+/discussion-*.jsonl
+*.log
+.env
+.env.*
+!.env.example
