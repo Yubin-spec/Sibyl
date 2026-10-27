@@ -3,7 +3,7 @@ set -eu
 cd -- "${0:A:h}"
 APP_DIR="${1:-../AI Bridge.app}"
 NODE_BIN="${2:-${AI_BRIDGE_NODE:-$(command -v node)}}"
-SOURCE_FILES=(bridge.mjs pairing.mjs control.mjs desktop.html desktop.js desktop.css workspace.mjs native-inbox.mjs native-mcp.mjs native-config.mjs claude-diagnostics.mjs package.json)
+SOURCE_FILES=(bridge.mjs pairing.mjs control.mjs update.mjs desktop.html desktop.js desktop.css workspace.mjs native-inbox.mjs native-mcp.mjs native-config.mjs claude-diagnostics.mjs package.json)
 for source_file in Desktop.swift Node-LICENSE "${SOURCE_FILES[@]}"; do
   [[ -f "$source_file" ]] || { print -u2 "Missing required resource: $source_file"; exit 1; }
 done
