@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Bridge 下载</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f7f4;--fg:#1c221c;--muted:#5b665b;--card:#fff;--line:#dfe4dc;--accent:#2f6f4f;--accent-fg:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#141815;--fg:#eef2ec;--muted:#a4afa5;--card:#1c221d;--line:#303a31;--accent:#55b789;--accent-fg:#0d1711}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif}
+main{max-width:720px;margin:0 auto;padding:72px 24px 96px}
+.mark{display:inline-flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.02em}
+.mark span{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:20px}
+h1{font-size:clamp(30px,5vw,44px);line-height:1.15;margin:28px 0 10px;letter-spacing:-.02em}
+.lead{color:var(--muted);font-size:18px;margin:0 0 32px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:28px}
+.download{display:inline-block;background:var(--accent);color:var(--accent-fg);text-decoration:none;font-weight:600;padding:14px 24px;border-radius:10px}
+.download:hover{filter:brightness(1.08)}
+.meta{display:flex;flex-wrap:wrap;gap:8px 18px;color:var(--muted);font-size:14px;margin:14px 0 0}
+.meta strong{color:var(--fg);font-weight:600}
+h2{font-size:17px;margin:0 0 8px}
+section{margin-top:36px}
+ol,ul{margin:0;padding-left:22px;color:var(--muted)}
+li{margin:4px 0}
+a{color:var(--accent)}
+footer{margin-top:52px;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<main>
+  <div class="mark"><span>⇄</span>AI Bridge</div>
+  <h1>让同一网络里的 AI 直接把问题聊清楚</h1>
+  <p class="lead">连接多台 Mac 上的 Claude Code、Cursor、Codex 与 WorkBuddy，减少人工转述。安装包由 GitHub 直接分发，没有网盘、没有广告跳转。</p>
+
+  <div class="card">
+    <a class="download" href="https://github.com/Yubin-spec/Sibyl/releases/download/v0.3.1/AI-Bridge-0.3.1-arm64.dmg">下载 AI Bridge 0.3.1</a>
+    <div class="meta"><span>版本 <strong>0.3.1</strong></span><span>Apple Silicon</span><span>macOS 13.5+</span><span>约 49 MB</span></div>
+  </div>
+
+  <section>
+    <h2>安装</h2>
+    <ol>
+      <li>打开下载的 DMG。</li>
+      <li>把 AI Bridge 拖入“应用程序”。</li>
+      <li>首次打开若被系统拦截，右键 App 选择“打开”。</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>升级</h2>
+    <p class="lead" style="font-size:16px;margin:0">App 的“设置 → 版本与更新”可以直接检查并下载新版本，不需要回到这个页面。</p>
+  </section>
+
+  <section>
+    <h2>说明</h2>
+    <ul>
+      <li>本地数据保存在 <code>~/Library/Application Support/AI Bridge/</code>，不会上传。</li>
+      <li>安装包未做 Apple 公证，首次打开需按上文放行。</li>
+      <li>源码与发布记录：<a href="https://github.com/Yubin-spec/Sibyl">github.com/Yubin-spec/Sibyl</a></li>
+    </ul>
+  </section>
+
+  <footer>AI Bridge 0.3.1 · 直接由 GitHub Releases 提供安装包</footer>
+</main>
+</body>
+</html>

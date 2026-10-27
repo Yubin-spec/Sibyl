@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {spawn} from 'node:child_process';
 import {createConnection} from 'node:net';
 import {readFile,writeFile,mkdir,readdir,rename,rm} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
@@ -8,8 +9,10 @@ import {networkInterfaces,hostname} from 'node:os';
 import {createBridge,detectAgents,makeClient,agentRunner} from './bridge.mjs';
 import {openWorkspace} from './workspace.mjs';
 import {openNativeInbox} from './native-inbox.mjs';
+import {latestRelease,updateInfo} from './update.mjs';
 const source=fileURLToPath(new URL('.',import.meta.url));
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
+const version=JSON.parse(await readFile(new URL('./package.json',import.meta.url),'utf8')).version;
 export async function createControl({dir,detect=detectAgents,runner=(prompt,session,signal,project,agent,options)=>agentRunner(agent,prompt,session,signal,project,options),healthInterval=15000}={}) {
  await mkdir(join(dir,'connections'),{recursive:true,mode:0o700});
  let notifyNative=()=>{};const nativeInbox=await openNativeInbox({dir,onChange:()=>notifyNative()});let store;try{store=await openWorkspace(dir);}catch(e){await nativeInbox.close();throw e;}
@@ -26,6 +29,9 @@ export async function createControl({dir,detect=detectAgents,runner=(prompt,sess
  const emit=event=>{const data=`data: ${JSON.stringify(event)}\n\n`;for(const res of streams){if(res.writableLength>1000000){res.destroy();streams.delete(res);}else res.write(data);}};
  const changed=()=>{if(closed)return;revision++;emit({type:'state',state:state(true)});};
  notifyNative=changed;
+ let updateCache=null;
+ const checkUpdate=async()=>{if(updateCache&&Date.now()-updateCache.at<300000)return updateCache.info;const info=updateInfo(version,await latestRelease());updateCache={at:Date.now(),info};return info;};
+ const downloadUpdate=async()=>{const info=await checkUpdate();if(!info.installer)throw Error('当前发布没有可下载的 DMG 安装包');if(info.installer.size>300_000_000)throw Error('安装包超过 300MB，已停止下载');const folder=join(dir,'updates');await mkdir(folder,{recursive:true,mode:0o700});const target=join(folder,info.installer.name.replace(/[^\w.-]/g,'_'));const response=await fetch(info.installer.url,{redirect:'follow',signal:AbortSignal.timeout(600000)});if(!response.ok)throw Error('下载安装包失败 HTTP '+response.status);const data=Buffer.from(await response.arrayBuffer());if(!data.length||data.length>300_000_000||(info.installer.size&&data.length!==info.installer.size))throw Error('安装包内容与发布信息不一致');await writeFile(target,data,{mode:0o600});spawn('open',[target],{detached:true,stdio:'ignore'}).unref();return {path:target,name:info.installer.name,version:info.latest};};
  const message=(id,input)=>{const m=store.appendMessage(id,{agent:'',...input});emit({type:'message',conversationId:id,message:m});return m;};
  const refreshing=new Map();
  const refresh=id=>{if(refreshing.has(id))return refreshing.get(id);const pending=(async()=>{const c=await credential(id),before=JSON.stringify(connections.get(id));try{const h=await makeClient(c.url,c.token)('/health');const current=connections.get(id);if(!current)return h;Object.assign(current,{status:'online',agents:h.agents||{},legacy:!h.capabilities?.catalog,...(h.device?{name:h.device.name,deviceId:h.device.id}:{})});if(h.device?.name&&c.remoteName!==h.device.name){const updated={...c,remoteName:h.device.name,deviceId:h.device.id};saveQueue=saveQueue.catch(()=>{}).then(async()=>{await writeFile(file(id)+'.tmp',JSON.stringify(updated),{mode:0o600});await rename(file(id)+'.tmp',file(id));});await saveQueue;}if(JSON.stringify(current)!==before)changed();return h;}catch(e){const current=connections.get(id);if(current&&current.status!=='offline'){current.status='offline';changed();}throw e;}})().finally(()=>refreshing.delete(id));refreshing.set(id,pending);return pending;};
@@ -44,8 +50,11 @@ export async function createControl({dir,detect=detectAgents,runner=(prompt,sess
  const server=http.createServer(async(req,res)=>{const send=(code,value)=>{res.writeHead(code,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(value));};try{const origin=`http://127.0.0.1:${server.address().port}`;if(req.headers.host!==new URL(origin).host)return send(403,{error:'Invalid local host'});const url=new URL(req.url,origin),path=url.pathname;
  if(req.method==='GET'&&['/','/desktop.js','/desktop.css'].includes(path)){const html=path==='/';let data=await readFile(join(source,html?'desktop.html':path.slice(1)),'utf8');if(html)data=data.replace('__BRIDGE_CSRF__',csrf);res.writeHead(200,{'content-type':html?'text/html; charset=utf-8':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/css; charset=utf-8','cache-control':'no-store','x-frame-options':'DENY','content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'"});res.end(data);return;}
  if(req.headers['x-bridge-ui']!==csrf||(req.method==='POST'&&req.headers.origin!==origin))return send(403,{error:'Invalid local UI session'});
+ if(req.method==='GET'&&path==='/api/version')return send(200,{version});
+ if(req.method==='GET'&&path==='/api/update')return send(200,await checkUpdate());
  if(req.method==='GET'){if(path==='/api/status')return send(200,state());if(path==='/api/events'){res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-store','connection':'keep-alive'});res.write(`data: ${JSON.stringify({type:'state',state:state(true)})}\n\n`);streams.add(res);req.on('close',()=>streams.delete(res));return;}if(path==='/api/conversations/messages')return send(200,store.messages(url.searchParams.get('id'),{after:Number(url.searchParams.get('after')||0),limit:Number(url.searchParams.get('limit')||100)}));if(path==='/api/native/sessions'){const c=await credential(url.searchParams.get('id'));return send(200,await makeClient(c.url,c.token)('/native/sessions'));}if(path==='/api/peer/catalog'){const c=await credential(url.searchParams.get('id'));return send(200,await makeClient(c.url,c.token)('/catalog'));}return send(404,{error:'Unknown endpoint'});}
  if(req.method!=='POST')return send(404,{error:'Unknown endpoint'});let raw='';for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>32000)throw Error('Request too large');}const body=JSON.parse(raw||'{}');let result={ok:true};
+ if(path==='/api/update/download'){result=await downloadUpdate();send(200,result);return;}
  if(path==='/api/device')result=store.setDevice(body);
  else if(path==='/api/settings')result=store.updateSettings(body);
  else if(path==='/api/projects/save')result=store.saveProject(body);

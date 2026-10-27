@@ -2,7 +2,9 @@
 
 在同一网络中的 Mac 之间连接 AI 编程工具，减少开发问题由人转述的步骤。也支持本机不同工具之间交流。
 
-当前版本 **0.3.0**。桌面端使用 Swift / AppKit / 系统 WebView，桥接服务使用 Node.js，项目与讨论记录使用 SQLite。无第三方 npm 依赖。
+当前版本 **0.3.1**。桌面端使用 Swift / AppKit / 系统 WebView，桥接服务使用 Node.js，项目与讨论记录使用 SQLite。无第三方 npm 依赖。
+
+下载安装包：[yubin-spec.github.io/Sibyl](https://yubin-spec.github.io/Sibyl/)（直达 GitHub Releases，无网盘或广告跳转）。App 的“设置 → 版本与更新”可直接检查并下载新版本。
 
 ## 开发与构建
 
