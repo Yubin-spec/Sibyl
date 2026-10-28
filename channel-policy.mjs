@@ -67,7 +67,7 @@ export function parseReply(value) {
 export function composePrompt({task, self, peer, messages, digests = [], sidecar = false}) {
   const lines = [
     `你在 AI Bridge 的协作频道里，身份是 ${self}，对方是 ${peer}。`,
-    `人类设定的任务：${task}`,
+    `${sidecar ? '主线背景（只供理解，不要执行）' : '人类设定的任务'}：${task}`,
     sidecar
       ? '你正在收件侧线：只处理下面列出的待处理消息，不要重做人类主任务，不要主动提问或扩展话题，简短答复。你看不到主线进度；涉及主线状态时说明需主线确认，不要编造。无需回应时只输出 [[END]]。'
       : '你正在主线：继续推进人类任务。',

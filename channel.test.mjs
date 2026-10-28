@@ -69,7 +69,7 @@ test('a busy main turn is not interrupted; a sidecar answers instead', async () 
   const f = await fixture({runner: async (prompt, sessionId, signal, path, agent) => {
     if (agent === 'codex' && sessionId === 'm-local') { await mainGate; return {session_id:'m-local', result:'主线完成 [[END]]'}; }
     if (agent === 'codex') return {session_id:sessionId || 'inbox-s', result:'侧线答复 ' + (++n) + ' [[END]]'};
-    if (!prompt.includes('收件侧线')) { await remoteGate; return {session_id:sessionId || 'm-remote', result:'远端主线 [[END]]'}; }
+    if (!prompt.includes('你正在收件侧线')) { await remoteGate; return {session_id:sessionId || 'm-remote', result:'远端主线 [[END]]'}; }
     return {session_id:sessionId || 'remote-inbox', result:'远端侧线 [[END]]'};
   }});
   try {
@@ -77,17 +77,18 @@ test('a busy main turn is not interrupted; a sidecar answers instead', async () 
     for (let i = 0; i < 100 && !f.calls.some(c => c.sessionId === 'm-local'); i++) await new Promise(r => setTimeout(r, 5));
     assert.ok(f.calls.some(c => c.sessionId === 'm-local'), 'main turn never started');
     f.control().send('补充：先跑测试');
-    for (let i = 0; i < 100 && !f.calls.some(c => c.prompt.includes('收件侧线')); i++) await new Promise(r => setTimeout(r, 5));
-    const sidecar = f.calls.find(c => c.prompt.includes('收件侧线'));
+    for (let i = 0; i < 100 && !f.calls.some(c => c.prompt.includes('你正在收件侧线')); i++) await new Promise(r => setTimeout(r, 5));
+    const sidecar = f.calls.find(c => c.prompt.includes('你正在收件侧线'));
     assert.ok(sidecar, 'sidecar never ran: ' + JSON.stringify(f.calls.map(c => c.sessionId + ':' + c.prompt.slice(0, 30))));
     assert.match(sidecar.prompt, /收件侧线/);
     assert.match(sidecar.prompt, /补充：先跑测试/);
     assert.match(sidecar.prompt, /\[human\] 补充：先跑测试/);
     assert.doesNotMatch(sidecar.prompt, /\[human\] 修 bug/, 'sidecar must not re-read the message already claimed by the main turn');
-    assert.equal(f.calls.filter(c => c.sessionId === 'm-local' && !c.prompt.includes('收件侧线')).length, 1);
+    assert.equal(f.calls.filter(c => c.sessionId === 'm-local' && !c.prompt.includes('你正在收件侧线')).length, 1);
     for (let i = 0; i < 100 && !f.messages.some(m => m.text.startsWith('侧线答复')); i++) await new Promise(r => setTimeout(r, 5));
     await new Promise(r => setTimeout(r, 20));
-    assert.ok(!f.calls.some(c => c.agent === 'claude' && c.prompt.includes('收件侧线')), 'sidecar reply must not wake a peer sidecar');
+    assert.ok(!f.calls.some(c => c.agent === 'claude'), 'human injection must not wake the peer while the main turn is busy');
+    assert.ok(!f.calls.some(c => c.agent === 'claude' && c.prompt.includes('你正在收件侧线')), 'sidecar reply must not wake a peer sidecar');
     releaseMain();
     releaseRemote();
     assert.equal(await within(running), 'done');
@@ -142,6 +143,44 @@ test('a sidecar failure keeps its message for the main line', async () => {
   } finally { release(); await f.close(); }
 });
 
+test('a new message waits for a running sidecar before starting the main line', async () => {
+  let releaseMain, releaseSidecar, mainCalls = 0, sidecarCalls = 0;
+  const mainGate = new Promise(resolve => { releaseMain = resolve; });
+  const sidecarGate = new Promise(resolve => { releaseSidecar = resolve; });
+  const f = await fixture({runner:async (prompt, sessionId, signal, path, agent) => {
+    if (agent === 'codex' && sessionId === 'm-local') {
+      mainCalls += 1;
+      await mainGate;
+      return {session_id:'m-local', result:'主线 ' + mainCalls + ' [[END]]'};
+    }
+    if (agent === 'codex') {
+      sidecarCalls += 1;
+      await sidecarGate;
+      return {session_id:sessionId || 'inbox', result:'侧线 [[END]]'};
+    }
+    return {session_id:sessionId || 'm-remote', result:'远端 [[END]]'};
+  }});
+  try {
+    const running = f.run();
+    for (let i = 0; i < 100 && mainCalls < 1; i++) await new Promise(r => setTimeout(r, 5));
+    f.control().send('补充：第一条');
+    for (let i = 0; i < 100 && sidecarCalls < 1; i++) await new Promise(r => setTimeout(r, 5));
+    releaseMain();
+    for (let i = 0; i < 100 && !f.messages.some(m => m.text === '主线 1'); i++) await new Promise(r => setTimeout(r, 5));
+    f.control().send('补充：第二条');
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(mainCalls, 1, 'main line must wait for the active sidecar');
+    releaseSidecar();
+    assert.equal(await within(running), 'done');
+    assert.equal(mainCalls, 2);
+  } finally {
+    f.control().stop('human_stop');
+    releaseMain();
+    releaseSidecar();
+    await f.close();
+  }
+});
+
 test('remote main and inbox use distinct rooms accepted by the peer', async () => {
   let release;
   const gate = new Promise(resolve => { release = resolve; });
@@ -152,7 +191,7 @@ test('remote main and inbox use distinct rooms accepted by the peer', async () =
     credential:async () => ({url:'http://peer', token:'t'}),
     remote:async (c, prompt, conv) => {
       rooms.push(conv.id);
-      if (!prompt.includes('收件侧线')) { await gate; return {result:'远端主线 [[END]]'}; }
+      if (!prompt.includes('你正在收件侧线')) { await gate; return {result:'远端主线 [[END]]'}; }
       return {result:'[[END]]'};
     },
     runner:async (prompt, sessionId) => ({session_id:sessionId || 'local-1', result:'本机先看 ' + (++local)})

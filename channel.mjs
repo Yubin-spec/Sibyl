@@ -113,14 +113,14 @@ export async function runChannel({id, task, store, runner, message, output = () 
   async function runInbox(side) {
     if (rt.inbox[side] || rt.stopped) return;
     const batch = read(side);
-    if (!batch.toAnswer.length) return check();
+    if (!batch.toAnswer.length) return check(other(side));
     rt.inbox[side] = true;
     advance(side, batch.readTo);
     try { await perform(side, batch, true); }
     catch (e) { if (!rt.stopped) { output(op, `[${name(side)} · 侧线] 失败：${e.message}`); setCursor(side, batch.from); } }
     rt.inbox[side] = false;
     if (rt.dirty[side]) { rt.dirty[side] = false; kick(side); }
-    check();
+    check(other(side));
   }
 
   function kick(side) {
@@ -129,15 +129,15 @@ export async function runChannel({id, task, store, runner, message, output = () 
       if (!read(side).toAnswer.some(m => m.side === 'human')) return;
       state.done[side] = false;
     }
+    if (rt.inbox[side]) { rt.dirty[side] = true; return; }
     if (rt.busy[side]) {
-      if (rt.inbox[side]) rt.dirty[side] = true;
-      else void runInbox(side);
+      void runInbox(side);
       return;
     }
     void runMain(side);
   }
 
-  function check() {
+  function check(skip) {
     if (rt.stopped) return;
     if (rt.busy.local || rt.busy.remote || rt.inbox.local || rt.inbox.remote) return;
     const unread = {local:read('local').toAnswer, remote:read('remote').toAnswer};
@@ -146,8 +146,8 @@ export async function runChannel({id, task, store, runner, message, output = () 
     const reason = shouldStop(state, {now:Date.now(), busy:false});
     if (!pending.local && !pending.remote) return stopWith(reason || 'done');
     if (reason === 'timeout' || reason === 'budget') return stopWith(reason);
-    if (pending.local) kick('local');
-    if (pending.remote) kick('remote');
+    if (pending.local && skip !== 'local') kick('local');
+    if (pending.remote && skip !== 'remote') kick('remote');
   }
 
   let idleTimer;
@@ -172,7 +172,6 @@ export async function runChannel({id, task, store, runner, message, output = () 
       message(id, {side:'human', text, deliveryStatus:'delivered'});
       resetIdle();
       kick('local');
-      kick('remote');
     },
     stop: reason => stopWith(reason || 'human_stop')
   });
