@@ -7,6 +7,7 @@ import { hostname } from 'node:os';
 
 const tools = ['claude', 'codex', 'cursor', 'workbuddy'];
 const statuses = ['idle', 'running', 'completed', 'failed', 'cancelled', 'archived'];
+const limitKeys = {maxMessages:[1,200], maxTurnsPerAgent:[1,50], maxDurationMs:[1000,86400000], idleTimeoutMs:[1000,86400000], duplicateLimit:[2,10]};
 const defaults = {page:'conversations', selectedProjectId:'', closeToTray:true, autoStartHost:false, networkPort:47831};
 function text(value, field, empty = false) {
   if (typeof value !== 'string' || (!empty && !value.trim())) throw new Error(`Invalid ${field}`);
@@ -24,6 +25,17 @@ function boolean(value, field) { if (typeof value !== 'boolean') throw new Error
 function keys(patch, allowed) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Expected object');
   for (const key of Object.keys(patch)) if (!allowed.includes(key)) throw new Error(`Unsupported field: ${key}`);
+}
+function limits(value) {
+  if (value == null) return null;
+  keys(value, Object.keys(limitKeys));
+  const out = {};
+  for (const [key,[min,max]] of Object.entries(limitKeys)) if (value[key] !== undefined) out[key] = integer(value[key], min, max, key);
+  return out;
+}
+function cursors(value) {
+  keys(value, ['local','remote']);
+  return {local:integer(value.local ?? 0,0,Number.MAX_SAFE_INTEGER,'cursor'), remote:integer(value.remote ?? 0,0,Number.MAX_SAFE_INTEGER,'cursor')};
 }
 const now = () => new Date().toISOString();
 
@@ -110,12 +122,17 @@ export async function openWorkspace(dir) {
       get('projects',input.projectId);const session=get('sessions',input.localSessionId);
       if(session.projectId!==input.projectId)throw new Error('Session belongs to another project');
       oneOf(session.tool,tools,'tool');const createdAt=now();
-      const record={id:randomUUID(),title:text(input.title,'title'),projectId:input.projectId,localSessionId:input.localSessionId,connectionId:text(input.connectionId,'connectionId'),remoteAgent:oneOf(input.remoteAgent,tools,'remoteAgent'),remoteProjectId:input.remoteProjectId==null?null:text(input.remoteProjectId,'remoteProjectId'),rounds:integer(input.rounds??1,1,5,'rounds'),status:'idle',createdAt,updatedAt:createdAt};
+      const record={id:randomUUID(),title:text(input.title,'title'),projectId:input.projectId,localSessionId:input.localSessionId,connectionId:text(input.connectionId,'connectionId'),remoteAgent:oneOf(input.remoteAgent,tools,'remoteAgent'),remoteProjectId:input.remoteProjectId==null?null:text(input.remoteProjectId,'remoteProjectId'),rounds:integer(input.rounds??1,1,5,'rounds'),mode:oneOf(input.mode??'meeting',['meeting','channel'],'mode'),limits:limits(input.limits),cursors:{local:0,remote:0},stopReason:null,status:'idle',createdAt,updatedAt:createdAt};
       db.prepare('INSERT INTO conversations VALUES (?,?,?,?)').run(record.id,record.projectId,record.localSessionId,JSON.stringify(record));return record;
     });},
     updateConversation(id,patch) {return transaction(()=>{
-      keys(patch,['title','status','rounds']);const record={...get('conversations',id),...patch,updatedAt:now()};
-      text(record.title,'title');oneOf(record.status,statuses,'status');integer(record.rounds,1,5,'rounds');return save('conversations',record);
+      keys(patch,['title','status','rounds','mode','limits','cursors','stopReason','lastActivityAt','usage']);const record={...get('conversations',id),...patch,updatedAt:now()};
+      text(record.title,'title');oneOf(record.status,statuses,'status');integer(record.rounds,1,5,'rounds');
+      if(record.mode!==undefined)oneOf(record.mode,['meeting','channel'],'mode');
+      if(record.limits!==undefined&&record.limits!==null)record.limits=limits(record.limits);
+      if(record.cursors!==undefined)record.cursors=cursors(record.cursors);
+      if(record.stopReason!==undefined&&record.stopReason!==null)text(record.stopReason,'stopReason');
+      return save('conversations',record);
     });},
     appendMessage(conversationId,input) {return transaction(()=>{
       get('conversations',conversationId);
