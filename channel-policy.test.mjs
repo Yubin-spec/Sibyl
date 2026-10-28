@@ -67,6 +67,10 @@ test('prompt carries task, messages, digests and the sidecar caveat', () => {
   assert.match(prompt, /\[remote\] 进度？/);
   assert.match(prompt, /已回复 A/);
   assert.match(prompt, /收件侧线/);
+  assert.match(prompt, /只处理下面列出的待处理消息/);
+  assert.match(prompt, /不要重做人类主任务/);
+  assert.match(prompt, /不要主动提问或扩展话题/);
+  assert.match(prompt, /简短答复/);
   assert.match(prompt, /\[\[END\]\]/);
 });
 

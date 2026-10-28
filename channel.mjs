@@ -116,11 +116,9 @@ export async function runChannel({id, task, store, runner, message, output = () 
     if (!batch.toAnswer.length) return check();
     rt.inbox[side] = true;
     advance(side, batch.readTo);
-    let body = null;
-    try { body = await perform(side, batch, true); }
+    try { await perform(side, batch, true); }
     catch (e) { if (!rt.stopped) { output(op, `[${name(side)} · 侧线] 失败：${e.message}`); setCursor(side, batch.from); } }
     rt.inbox[side] = false;
-    if (body && !rt.stopped) kick(other(side));
     if (rt.dirty[side]) { rt.dirty[side] = false; kick(side); }
     check();
   }

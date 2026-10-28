@@ -63,12 +63,14 @@ test('three identical agent replies are treated as a loop', async () => {
 });
 
 test('a busy main turn is not interrupted; a sidecar answers instead', async () => {
-  let release, n = 0;
-  const gate = new Promise(resolve => { release = resolve; });
+  let releaseMain, releaseRemote, n = 0;
+  const mainGate = new Promise(resolve => { releaseMain = resolve; });
+  const remoteGate = new Promise(resolve => { releaseRemote = resolve; });
   const f = await fixture({runner: async (prompt, sessionId, signal, path, agent) => {
-    if (agent === 'codex' && sessionId === 'm-local' && !prompt.includes('补充')) { await gate; return {session_id:'m-local', result:'主线完成 [[END]]'}; }
+    if (agent === 'codex' && sessionId === 'm-local') { await mainGate; return {session_id:'m-local', result:'主线完成 [[END]]'}; }
     if (agent === 'codex') return {session_id:sessionId || 'inbox-s', result:'侧线答复 ' + (++n) + ' [[END]]'};
-    return {session_id:sessionId || 'm-remote', result:'远端收到 ' + (++n) + ' [[END]]'};
+    if (!prompt.includes('收件侧线')) { await remoteGate; return {session_id:sessionId || 'm-remote', result:'远端主线 [[END]]'}; }
+    return {session_id:sessionId || 'remote-inbox', result:'远端侧线 [[END]]'};
   }});
   try {
     const running = f.run();
@@ -83,11 +85,15 @@ test('a busy main turn is not interrupted; a sidecar answers instead', async () 
     assert.match(sidecar.prompt, /\[human\] 补充：先跑测试/);
     assert.doesNotMatch(sidecar.prompt, /\[human\] 修 bug/, 'sidecar must not re-read the message already claimed by the main turn');
     assert.equal(f.calls.filter(c => c.sessionId === 'm-local' && !c.prompt.includes('收件侧线')).length, 1);
-    release();
+    for (let i = 0; i < 100 && !f.messages.some(m => m.text.startsWith('侧线答复')); i++) await new Promise(r => setTimeout(r, 5));
+    await new Promise(r => setTimeout(r, 20));
+    assert.ok(!f.calls.some(c => c.agent === 'claude' && c.prompt.includes('收件侧线')), 'sidecar reply must not wake a peer sidecar');
+    releaseMain();
+    releaseRemote();
     assert.equal(await within(running), 'done');
     assert.ok(f.messages.some(m => m.text.startsWith('侧线答复')));
     assert.ok(f.messages.some(m => m.text === '主线完成'));
-  } finally { release(); await f.close(); }
+  } finally { releaseMain(); releaseRemote(); await f.close(); }
 });
 
 test('human stop aborts the in-flight turn and records human_stop', async () => {
