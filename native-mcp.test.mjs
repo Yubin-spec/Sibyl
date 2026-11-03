@@ -56,3 +56,36 @@ test('a polling failure returns the submitted question ID for recovery without r
  try{const s=await sender.tool('bridge_open_session',{title:'source'});await assert.rejects(sender.tool('bridge_ask',{sessionId:s.id,connectionId:id,targetSessionId:'target',text:'question',waitMs:0}),e=>e.message.includes(submitted.id)&&e.message.includes('bridge_result'));}
  finally{await sender.close();await inbox.close();await new Promise(r=>server.close(r));await rm(dir,{recursive:true,force:true});}
 });
+
+test('managed consultation starts from the current tool directory without asking for the target project',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'bridge-mcp-consult-'));let started;
+ const inbox=await openNativeInbox({dir,
+  consult:async input=>{started=input;return {consultId:'consult-one',status:'running'};},
+  consultResult:async ({session,id})=>id==='consult-one'&&session.id?{consultId:id,status:'completed',text:'module verified'}:null
+ });
+ const mcp=client(dir,'codex');
+ try{
+  const listed=await mcp.call('tools/list'),consult=listed.tools.find(t=>t.name==='bridge_consult');assert.ok(consult);assert.equal('projectId' in consult.inputSchema.properties,false);
+  const source=await mcp.tool('bridge_open_session',{title:'source task'});
+  const result=await mcp.tool('bridge_consult',{sessionId:source.id,tool:'claude',text:'verify the parser module',waitMs:0});
+  assert.equal(result.status,'completed');assert.equal(result.text,'module verified');
+  assert.equal(started.projectId,undefined);assert.equal(started.session.projectPath,process.cwd());
+  assert.equal((await mcp.tool('bridge_consult_result',{sessionId:source.id,consultId:'consult-one',waitMs:0})).text,'module verified');
+ }finally{await mcp.close();await inbox.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('managed consultation returns immediately when waitMs is omitted',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'bridge-mcp-async-consult-'));let resultCalls=0;
+ const inbox=await openNativeInbox({dir,
+  consult:async()=>({consultId:'consult-async',status:'running',threadId:'thread-one',round:2,route:{mode:'binding'}}),
+  consultResult:async()=>{resultCalls+=1;return {consultId:'consult-async',status:'running'};}
+ });
+ const mcp=client(dir,'codex');
+ try{
+  const source=await mcp.tool('bridge_open_session',{title:'source task'});
+  const started=await mcp.tool('bridge_consult',{sessionId:source.id,tool:'claude',text:'verify parser'});
+  assert.equal(started.consultId,'consult-async');assert.equal(started.status,'running');assert.equal(started.round,2);assert.equal(resultCalls,0);
+  assert.match(started.notice,/background/i);
+  const listed=await mcp.call('tools/list');assert.ok(listed.tools.some(t=>t.name==='bridge_consult_stop'));
+ }finally{await mcp.close();await inbox.close();await rm(dir,{recursive:true,force:true});}
+});

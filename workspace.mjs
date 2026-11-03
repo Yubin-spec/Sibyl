@@ -61,6 +61,8 @@ export async function openWorkspace(dir) {
         PRAGMA user_version=1;`);
       db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('device',JSON.stringify({id:randomUUID(),name:hostname(),owner:''}));
       db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('settings',JSON.stringify(defaults));
+      db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('bindings',JSON.stringify([]));
+      db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('consultations',JSON.stringify([]));
       for (const row of db.prepare('SELECT id,data FROM conversations').all()) {
         const record=JSON.parse(row.data);
         if(record.status==='running') {record.status='failed';record.updatedAt=now();db.prepare('UPDATE conversations SET data=? WHERE id=?').run(JSON.stringify(record),row.id);}
@@ -69,6 +71,13 @@ export async function openWorkspace(dir) {
   } catch(error) {db.close();throw error;}
   const meta = key => JSON.parse(db.prepare('SELECT data FROM meta WHERE key=?').get(key).data);
   const putMeta = (key,value) => db.prepare('UPDATE meta SET data=? WHERE key=?').run(JSON.stringify(value),key);
+  const consultations = meta('consultations');
+  for (const record of consultations) if (record.status === 'running') {
+    record.status = 'interrupted';
+    record.error = '后台已重启；该核对线程未完成，请重新发起或检查已有结果。';
+    record.updatedAt = now();
+  }
+  if (consultations.some(record => record.status === 'interrupted')) putMeta('consultations', consultations);
   const get = (table,id) => {
     const row=db.prepare(`SELECT data FROM ${table} WHERE id=?`).get(text(id,'id'));
     if(!row) throw new Error(`${table} record not found: ${id}`);
@@ -85,7 +94,7 @@ export async function openWorkspace(dir) {
     return record;
   }
   return {
-    snapshot() {return {device:meta('device'),settings:meta('settings'),projects:list('projects'),sessions:list('sessions'),conversations:list('conversations')};},
+    snapshot() {return {device:meta('device'),settings:meta('settings'),projects:list('projects'),sessions:list('sessions'),conversations:list('conversations'),bindings:meta('bindings')};},
     setDevice(patch) {return transaction(()=>{keys(patch,['name','owner']);const record=meta('device');for(const [key,value] of Object.entries(patch))record[key]=text(value,key,true);putMeta('device',record);return record;});},
     updateSettings(patch) {return transaction(()=>{
       keys(patch,Object.keys(defaults));const record=meta('settings');
@@ -96,6 +105,12 @@ export async function openWorkspace(dir) {
         record[key]=value;
       }
       putMeta('settings',record);return record;
+    });},
+    dismissAttention(key) {return transaction(()=>{
+      if(typeof key!=='string'||!/^(consult|conversation):[a-zA-Z0-9:._-]{1,220}$/.test(key))throw new Error('Invalid attention item');
+      const record=meta('settings'),list=Array.isArray(record.dismissedAttention)?record.dismissedAttention:[];
+      if(!list.includes(key))list.push(key);
+      record.dismissedAttention=list.slice(-100);putMeta('settings',record);return record.dismissedAttention;
     });},
     saveProject(input) {return transaction(()=>{
       const name=text(input.name,'name');const path=realpathSync(text(input.path,'path'));
@@ -108,10 +123,30 @@ export async function openWorkspace(dir) {
       const record={id,name,path,createdAt:previous?JSON.parse(previous.data).createdAt:now()};
       db.prepare('INSERT INTO projects VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,data=excluded.data').run(id,path,JSON.stringify(record));return record;
     });},
-    deleteProject(id) {return transaction(()=>{get('projects',id);db.prepare('DELETE FROM projects WHERE id=?').run(id);});},
+    deleteProject(id) {return transaction(()=>{get('projects',id);db.prepare('DELETE FROM projects WHERE id=?').run(id);putMeta('bindings',meta('bindings').filter(binding=>binding.sourceProjectId!==id&&binding.targetProjectId!==id));});},
+    saveBinding(input) {return transaction(()=>{
+      keys(input,['sourceProjectId','targetTool','targetProjectId']);
+      const record={sourceProjectId:text(input.sourceProjectId,'sourceProjectId'),targetTool:oneOf(input.targetTool,tools,'targetTool'),targetProjectId:text(input.targetProjectId,'targetProjectId')};
+      get('projects',record.sourceProjectId);get('projects',record.targetProjectId);
+      putMeta('bindings',[...meta('bindings').filter(binding=>binding.sourceProjectId!==record.sourceProjectId||binding.targetTool!==record.targetTool),record]);return record;
+    });},
+    deleteBinding(input) {return transaction(()=>{
+      keys(input,['sourceProjectId','targetTool']);
+      const sourceProjectId=text(input.sourceProjectId,'sourceProjectId'),targetTool=oneOf(input.targetTool,tools,'targetTool');
+      putMeta('bindings',meta('bindings').filter(binding=>binding.sourceProjectId!==sourceProjectId||binding.targetTool!==targetTool));return {ok:true};
+    });},
     getProject(id) {return get('projects',id);},
     getSession(id) {return get('sessions',id);},
     getConversation(id) {return get('conversations',id);},
+    listConsultations() {return meta('consultations');},
+    saveConsultation(record) {return transaction(()=>{
+      const id=text(record.id,'id');
+      const value={...record,id,updatedAt:now()};
+      const list=meta('consultations').filter(item=>item.id!==id);
+      list.push(value);
+      list.sort((a,b)=>String(b.startedAt).localeCompare(String(a.startedAt)));
+      putMeta('consultations',list.slice(0,100));return value;
+    });},
     registerSession(input) {return transaction(()=>{
       get('projects',input.projectId);
       const record=validateSession({id:input.id===undefined?randomUUID():text(input.id,'id'),projectId:input.projectId,tool:input.tool,title:input.title,nativeSessionId:input.nativeSessionId??null,mode:input.mode??'managed',shared:input.shared??false,capability:input.capability??(input.mode==='native-inbox'?'inbox':'managed'),createdAt:now()});

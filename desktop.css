@@ -31,6 +31,7 @@ nav{display:grid;gap:2px}
 nav button{text-align:left;background:transparent;border:0;display:flex;gap:11px;padding:8px 10px;font-size:13.5px;border-radius:8px;font-weight:500}
 nav button:hover{background:var(--fill)}
 nav .active{background:var(--elevated);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.nav-badge{margin-left:auto;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#ff3b30;color:#fff;font-size:10px;line-height:18px;text-align:center;font-weight:600}
 .sidebar-bottom{margin-top:auto;display:grid;gap:7px;font-size:12px;overflow-wrap:anywhere;padding:0 6px}
 main{margin-left:200px;min-height:100vh}
 .content{max-width:1120px;margin:auto;padding:28px 32px 40px;overflow-wrap:anywhere}
@@ -94,3 +95,24 @@ form>.primary,form>button{margin-top:16px}
 .native-instructions{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--fill);border:0;border-radius:10px;padding:14px;font:12px/1.8 ui-monospace,SFMono-Regular,Menlo,monospace;max-height:300px;overflow:auto}.native-question{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8;margin:12px 0}.native-question+h3{margin-top:16px}
 
 .diagnostic-output{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--fill);border-radius:10px;padding:10px;margin:10px 0}
+
+.metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}
+.metric{padding:16px 18px;background:var(--elevated);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);display:grid;gap:5px}
+.metric small{font-size:11px}
+.metric strong{font-size:28px;line-height:1.1;letter-spacing:-.04em;font-weight:700}
+.metric span{font-size:11px;color:var(--muted);line-height:1.45}
+.focus{margin-bottom:18px}
+.focus-card{padding:18px 20px;background:var(--elevated);border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:16px;box-shadow:var(--shadow);display:grid;gap:9px}
+.focus-eyebrow{color:var(--blue);font-size:11px;font-weight:700;letter-spacing:.06em}
+.focus-card h2{font-size:20px;margin:0}
+.focus-card p{margin:0;font-size:12px}
+.focus-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.focus-actions button{margin-top:0}
+.focus-more{color:var(--muted)}
+.rule-list{display:grid;gap:9px}
+.rule{padding:10px 12px;border-radius:11px;background:var(--fill);font-size:12px;line-height:1.55}
+.consult-question{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.75;padding:12px 14px;border-radius:12px;background:var(--fill);margin:12px 0}
+.consult-meta{font-size:11px;margin:8px 0 0}
+.consult-result{white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--fill);border-radius:10px;padding:12px;margin:10px 0 0}
+details summary{cursor:pointer;color:var(--blue);font-size:12px;font-weight:550}
+@media(max-width:900px){.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}

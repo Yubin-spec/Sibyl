@@ -74,6 +74,15 @@ test('prompt carries task, messages, digests and the sidecar caveat', () => {
   assert.match(prompt, /不要主动提问或扩展话题/);
   assert.match(prompt, /简短答复/);
   assert.match(prompt, /\[\[END\]\]/);
+  assert.doesNotMatch(prompt, /一次只推进一个明确目标/);
+});
+
+test('main channel prompt asks for one decision at a time and impact-based stopping', () => {
+  const prompt = composePrompt({task: '修 bug', self: 'codex', peer: 'claude', messages: []});
+  assert.match(prompt, /一次只推进一个明确目标/);
+  assert.match(prompt, /只提出一个问题/);
+  assert.match(prompt, /按影响停止/);
+  assert.match(prompt, /扩大权限或做设计决策时停下说明/);
 });
 
 test('defaults match the agreed boundaries', () => {

@@ -39,11 +39,12 @@ export function runProcess(command,args,{cwd,signal,input='',timeout=180000,onOu
 async function claudeRunner(prompt,session,signal,project,options={}) {
   const diagnosticDir=await mkdtemp(join(tmpdir(),'ai-bridge-claude-'));
   const logPath=join(diagnosticDir,'debug.log');await writeFile(logPath,'',{mode:0o600,flag:'wx'});
-  const args=['-p','--output-format','json','--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--max-turns','1','--append-system-prompt',policy];
+  const args=['-p','--output-format','json','--tools',options.readOnly?'Read,Grep,Glob':'','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--max-turns',options.readOnly?'4':'1','--append-system-prompt',policy];
+  if(options.fast) args.push('--effort','low');
   args.push('--debug-file',logPath);
   if(session) args.push('--resume',session);
   try {
-    const raw=await runProcess('claude',args,{cwd:project,signal,input:prompt,timeout:options.diagnostic?45000:180000});
+    const raw=await runProcess('claude',args,{cwd:project,signal,input:prompt,timeout:options.diagnostic?45000:180000,onOutput:options.onOutput});
     const result=JSON.parse(raw);
     if(result.is_error || !result.session_id || typeof result.result!=='string') throw Error('Claude returned an unsuccessful or invalid result');
     return {result:result.result,session_id:result.session_id,cost:result.total_cost_usd};
@@ -176,9 +177,10 @@ async function codexRunner(prompt,session,signal,project,options={}) {
   const args=['exec','--sandbox','read-only','--skip-git-repo-check','--json',
     '-c','features.shell_tool=false','-c','features.unified_exec=false',
     '-c','mcp_servers={}'];
+  if(options.fast) args.push('-c','model_reasoning_effort=low');
   if(session) args.push('resume',session);
   args.push('-');
-  const raw=await runProcess('codex',args,{cwd:project,signal,input:prompt,timeout:options.diagnostic?45000:180000});
+  const raw=await runProcess('codex',args,{cwd:project,signal,input:prompt,timeout:options.diagnostic?45000:180000,onOutput:options.onOutput});
   const events=raw.trim().split('\n').filter(Boolean).map(line=>JSON.parse(line));
   const id=events.find(e=>e.type==='thread.started')?.thread_id || session;
   const messages=events.filter(e=>e.type==='item.completed' && e.item?.type==='agent_message');
@@ -196,8 +198,8 @@ export async function agentRunner(agent,prompt,session,signal,project,options={}
   // Cursor positional input is passed as an argv item, never through a shell.
   args.push(policy+'\n'+prompt);
   let raw;
-  try{raw=await runProcess('cursor-agent',args,{cwd:project,signal,timeout:options.diagnostic?45000:180000});}
-  catch(e){if(e.code!=='ENOENT') throw e;raw=await runProcess('agent',args,{cwd:project,signal,timeout:options.diagnostic?45000:180000});}
+  try{raw=await runProcess('cursor-agent',args,{cwd:project,signal,timeout:options.diagnostic?45000:180000,onOutput:options.onOutput});}
+  catch(e){if(e.code!=='ENOENT') throw e;raw=await runProcess('agent',args,{cwd:project,signal,timeout:options.diagnostic?45000:180000,onOutput:options.onOutput});}
   const result=JSON.parse(raw);
   if(result.is_error || !result.session_id || typeof result.result!=='string') throw Error('Cursor returned an unsuccessful or invalid result');
   return {session_id:result.session_id,result:result.result};

@@ -51,6 +51,15 @@ test('canonical projects and session/conversation references stay isolated',asyn
   for (const fn of ['getProject','getSession','getConversation']) assert.throws(()=>w[fn]('missing'));
 });
 
+test('project tool bindings replace by source and tool, validate projects, and clean up with projects',async t=>{
+  const {root,w}=await fixture(t);const a=w.saveProject({name:'A',path:join(root,'a')}),b=w.saveProject({name:'B',path:join(root,'b')});
+  assert.deepEqual(w.saveBinding({sourceProjectId:a.id,targetTool:'claude',targetProjectId:b.id}),{sourceProjectId:a.id,targetTool:'claude',targetProjectId:b.id});
+  assert.equal(w.snapshot().bindings.length,1);
+  assert.throws(()=>w.saveBinding({sourceProjectId:a.id,targetTool:'unknown',targetProjectId:b.id}));
+  assert.throws(()=>w.saveBinding({sourceProjectId:'missing',targetTool:'claude',targetProjectId:b.id}));
+  w.deleteProject(b.id);assert.deepEqual(w.snapshot().bindings,[]);
+});
+
 test('messages are idempotent, conflict checked and bounded by conversation',async t=>{
   const {root,w}=await fixture(t);const p=w.saveProject({name:'A',path:join(root,'a')});
   const s=w.registerSession({projectId:p.id,tool:'cursor',title:'S'});
@@ -89,4 +98,26 @@ test('explicit project ID renames the same canonical path and persists on reopen
   const reopened=await openWorkspace(dir);t.after(()=>reopened.close());
   assert.deepEqual(reopened.getProject(before.id),renamed);
   assert.equal(reopened.snapshot().projects.length,1);
+});
+
+test('consultation threads persist and unfinished workers become interrupted after restart', async t => {
+  const {dir,w}=await fixture(t);
+  const record={id:'consult-one',threadId:'thread-one',sourceSessionId:'source',sourceProjectId:'source-project',targetTool:'claude',targetProjectId:'target-project',targetProjectName:'Target',question:'verify parser',status:'running',round:2,startedAt:new Date().toISOString(),lastProgressAt:new Date().toISOString(),progressEvents:1,outputBytes:12};
+  assert.equal(w.saveConsultation(record).id,'consult-one');
+  assert.equal(w.listConsultations().length,1);
+  w.close();
+  const {openWorkspace}=await import('./workspace.mjs');const reopened=await openWorkspace(dir);t.after(()=>reopened.close());
+  const [stored]=reopened.listConsultations();
+  assert.equal(stored.status,'interrupted');assert.match(stored.error,/后台已重启/);assert.equal(stored.round,2);
+});
+
+test('attention dismissals persist and reject unsafe keys', async t => {
+  const {dir,w}=await fixture(t);
+  const key='consult:c-1:2026-11-03T10:00:00.000Z';
+  assert.deepEqual(w.dismissAttention(key),[key]);
+  assert.deepEqual(w.dismissAttention(key),[key]);
+  assert.throws(()=>w.dismissAttention('pair:secret'));
+  w.close();
+  const {openWorkspace}=await import('./workspace.mjs');const reopened=await openWorkspace(dir);t.after(()=>reopened.close());
+  assert.deepEqual(reopened.snapshot().settings.dismissedAttention,[key]);
 });

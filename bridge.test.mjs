@@ -125,5 +125,5 @@ test('targeted cancellation never interrupts another job owned by the same peer'
   await post('/turn',{id:'job-b',prompt:'wait'});await ready;
   await post('/stop',{id:'job-a'});await new Promise(r=>setTimeout(r,5));assert.equal(b.state.jobs['job-b'].status,'running');
   await post('/stop',{id:'job-b'});for(let i=0;i<100&&b.state.jobs['job-b'].status==='running';i++)await new Promise(r=>setTimeout(r,5));assert.equal(b.state.jobs['job-b'].status,'cancelled');
- }finally{b.cancel();await new Promise(r=>b.server.close(r));await rm(dir,{recursive:true,force:true});}
+ }finally{b.cancel();await new Promise(r=>b.server.close(r));await rm(dir,{recursive:true,force:true,maxRetries:5,retryDelay:20});}
 });

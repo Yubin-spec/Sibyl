@@ -61,7 +61,7 @@ export async function runChannel({id, task, store, runner, message, output = () 
   async function runTurn(side, prompt, sidecar) {
     if (side === 'local') {
       const s = sidecar ? ensure('inbox-'+id, session.tool, project.id, '收件侧线') : session;
-      const r = await runner(prompt, s.nativeSessionId, abort.signal, project.path, session.tool, {});
+      const r = await runner(prompt, s.nativeSessionId, abort.signal, project.path, session.tool, {fast:true});
       if (r.session_id) { s.nativeSessionId = r.session_id; store.updateSession(s.id, {nativeSessionId:r.session_id}); }
       return r.result;
     }
@@ -69,7 +69,7 @@ export async function runChannel({id, task, store, runner, message, output = () 
       const s = sidecar
         ? ensure('inbox-remote-'+id, c.remoteAgent, remoteProject.id, '收件侧线')
         : ensure('remote-'+id, c.remoteAgent, remoteProject.id, 'remote');
-      const r = await runner(prompt, s.nativeSessionId, abort.signal, remoteProject.path, c.remoteAgent, {});
+      const r = await runner(prompt, s.nativeSessionId, abort.signal, remoteProject.path, c.remoteAgent, {fast:true});
       if (r.session_id) { s.nativeSessionId = r.session_id; store.updateSession(s.id, {nativeSessionId:r.session_id}); }
       return r.result;
     }

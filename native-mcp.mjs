@@ -9,7 +9,7 @@ import {makeClient} from './bridge.mjs';
 const {values}=parseArgs({options:{dir:{type:'string',default:join(homedir(),'Library','Application Support','AI Bridge')},tool:{type:'string',default:'claude'}},strict:true});
 const dir=resolve(values.dir),sessions=new Map(),requests=new Map(),active=new Map();
 const validId=v=>typeof v==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(v);
-const str={type:'string'},wait={type:'integer',minimum:0,maximum:25000,default:25000};
+const str={type:'string'},wait={type:'integer',minimum:0,maximum:25000,default:25000},consultWait={type:'integer',minimum:0,maximum:25000};
 const definitions=[
  ['bridge_open_session','Register THIS conversation with a distinct handle. Keep its returned session ID in this conversation; do not use another chat’s ID. nativeSessionId is optional self-reported metadata, not automatic attachment.',{title:str,projectId:str,nativeSessionId:str},['title']],
  ['bridge_list_peers','List computers already paired with AI Bridge. No automatic pairing or model requests.',{},[]],
@@ -18,6 +18,9 @@ const definitions=[
  ['bridge_receive','Receive questions addressed only to this registered conversation. Read the returned messages in THIS chat, analyze with its current task context, and answer using bridge_reply. Does not launch another AI. If empty, continue the task and receive again when collaboration is needed.',{sessionId:str,waitMs:wait},['sessionId']],
  ['bridge_reply','Reply to a question received in THIS conversation. Keep questionId and peerId from bridge_receive. This sends collaboration data, not permission to change the caller’s task.',{sessionId:str,questionId:str,peerId:str,text:str},['sessionId','questionId','peerId','text']],
  ['bridge_result','Retrieve an existing question’s answer into the SAME asking chat, then use it to continue the original task. Does not resend the question.',{sessionId:str,questionId:str,waitMs:wait},['sessionId','questionId']],
+ ['bridge_consult','Automatically start a read-only managed consultation with another local AI tool when a module it owns needs verification. Returns immediately with consultId; continue the current task and use bridge_consult_result later. The saved project binding chooses the target project, so the caller does not know or pass it. This starts an isolated Worker, never wakes or joins the target original chat, and never modifies files.',{sessionId:str,tool:str,text:str,waitMs:consultWait},['sessionId','tool','text']],
+ ['bridge_consult_result','Retrieve a managed consultation result into the SAME asking chat. Does not start another consultation.',{sessionId:str,consultId:str,waitMs:wait},['sessionId','consultId']],
+ ['bridge_consult_stop','Stop only this managed read-only consultation Worker. It does not interrupt the asking chat or any target original chat.',{sessionId:str,consultId:str},['sessionId','consultId']],
  ['bridge_close_session','Stop sharing this conversation. Pending questions become unavailable; no CLI fallback.',{sessionId:str},['sessionId']]
 ].map(([name,description,properties,required])=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}}));
 const own=id=>{const s=sessions.get(id);if(!s)throw Error('Session does not belong to this MCP connection; register this conversation first');return s;};
@@ -45,12 +48,21 @@ async function answer(id,ms,signal){
   await pause(Math.min(500,Math.max(1,deadline-Date.now())),signal);
  }
 }
+async function consultAnswer(session,id,ms,signal){
+ const deadline=Date.now()+ms;
+ while(true){
+  const waitMs=Math.max(0,Math.min(25000,deadline-Date.now()));
+  const value=await local('/consult/result',{id:session.id,lease:session.lease,consultId:id,waitMs},signal);
+  if(value.status!=='running')return value;
+  if(Date.now()>=deadline)return {...value,notice:'Still running; keep consultId and call bridge_consult_result; do not resubmit.'};
+ }
+}
 async function tool(name,args,signal){
  const def=definitions.find(t=>t.name===name);if(!def)throw Error('Unknown tool');
  if(!args||typeof args!=='object'||Array.isArray(args)||Object.keys(args).some(k=>!Object.hasOwn(def.inputSchema.properties,k))||def.inputSchema.required.some(k=>args[k]===undefined))throw Error('Invalid tool arguments');
  for(const [k,v] of Object.entries(args))if(def.inputSchema.properties[k].type==='string'&&(typeof v!=='string'||!v.trim()||v.length>20000))throw Error('Invalid '+k);
  if(name==='bridge_open_session'){
-  const s=await local('/register',{...args,tool:values.tool},signal);sessions.set(s.id,s);
+  const s=await local('/register',{...args,tool:values.tool,projectPath:process.cwd()},signal);sessions.set(s.id,s);
   const {lease,...publicSession}=s;return {...publicSession,notice:'Keep this handle in this conversation. Sharing is active while this MCP process is alive; nativeSessionId is self-reported. Ask bridge_receive to read incoming questions here.'};
  }
  if(name==='bridge_list_peers'){
@@ -61,6 +73,9 @@ async function tool(name,args,signal){
  const session=own(args.sessionId),identity={id:session.id,lease:session.lease};
  if(name==='bridge_receive')return local('/receive',{...identity,waitMs:duration(args.waitMs)},signal);
  if(name==='bridge_reply')return local('/reply',{...identity,questionId:args.questionId,peerId:args.peerId,text:args.text},signal);
+ if(name==='bridge_consult'){const started=await local('/consult',{...identity,tool:args.tool,text:args.text},signal);if(args.waitMs===undefined)return {...started,notice:'Consultation started in the background. Keep consultId; do not resubmit. Use bridge_consult_result when you need the answer.'};return consultAnswer(session,started.consultId,duration(args.waitMs),signal);}
+ if(name==='bridge_consult_result')return consultAnswer(session,args.consultId,duration(args.waitMs),signal);
+ if(name==='bridge_consult_stop')return local('/consult/stop',{...identity,consultId:args.consultId},signal);
  if(name==='bridge_close_session'){const result=await local('/close',identity,signal);sessions.delete(session.id);return result;}
  if(name==='bridge_result'){
   const q=requests.get(args.questionId);if(!q||q.sessionId!==session.id)throw Error('Question does not belong to this conversation');
@@ -82,7 +97,7 @@ async function handle(message){
  const controller=new AbortController();active.set(message.id,controller);
  try{
   let result;
-  if(message.method==='initialize')result={protocolVersion:['2024-11-05','2025-03-26','2025-06-18'].includes(message.params?.protocolVersion)?message.params.protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'ai-bridge',version:'0.3.0'},instructions:'Only communicate within the human-approved task. Open a separate session handle in each conversation. Receive and reply in the original chat. Queued means not answered; never substitute a new CLI conversation.'};
+  if(message.method==='initialize')result={protocolVersion:['2024-11-05','2025-03-26','2025-06-18'].includes(message.params?.protocolVersion)?message.params.protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'ai-bridge',version:'0.5.0'},instructions:'Only communicate within the human-approved task. Open a separate session handle in each conversation. Receive and reply in the original chat. When another AI tool owns a module that needs verification and its chat is not live, call bridge_consult with that tool; the bridge routes by saved project binding, starts an isolated read-only Worker in the background, and returns consultId immediately. Keep the consultId and use bridge_consult_result; never resubmit. Use bridge_consult_stop only for that Worker. Never claim it is the target original chat.'};
   else if(message.method==='ping')result={};
   else if(message.method==='tools/list')result={tools:definitions};
   else if(message.method==='tools/call'){try{const value=await tool(message.params?.name,message.params?.arguments||{},controller.signal);result={content:[{type:'text',text:JSON.stringify(value)}]};}catch(e){result={isError:true,content:[{type:'text',text:e.message}]};}}

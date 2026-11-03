@@ -2,7 +2,7 @@
 
 在同一网络中的 Mac 之间连接 AI 编程工具，减少开发问题由人转述的步骤。也支持本机不同工具之间交流。
 
-当前版本 **0.3.1**。桌面端使用 Swift / AppKit / 系统 WebView，桥接服务使用 Node.js，项目与讨论记录使用 SQLite。无第三方 npm 依赖。
+当前版本 **0.5.0**。桌面端使用 Swift / AppKit / 系统 WebView，桥接服务使用 Node.js，项目、讨论与核对线程使用 SQLite。无第三方 npm 依赖。
 
 下载安装包：[yubin-spec.github.io/Sibyl](https://yubin-spec.github.io/Sibyl/)（直达 GitHub Releases，无网盘或广告跳转）。App 的“设置 → 版本与更新”可直接检查并下载新版本。
 
@@ -28,26 +28,31 @@ AI_BRIDGE_NODE=/path/to/standalone/node npm run build
 
 ## 能力与验证边界
 
-- 五个页面：会话、电脑、本机 AI、项目、设置。
-- 短码审批配对、多设备记录、双向状态同步和撤销。
+- 六个页面：会话、运行台、电脑、本机 AI、项目、设置。
+- 短码审批配对、同时连接多台电脑、双向状态同步和逐台撤销。
 - 多项目专用 CLI 讨论与频道协作：固定轮数或 agent 自主对话，收件侧线不打断主任务，消息持久化、SSE 增量更新和定向取消。
-- Claude Code / Cursor 项目级 MCP 配置，原聊天登记、定向收件、询问与答复回传。
+- 原 AI 会话内跨工具核对：在“本机 AI”配置项目 MCP 时一并绑定“询问方项目 + 目标工具 → 目标项目”，`bridge_consult` 只传工具名即可在后台启动隔离的只读 Worker，并立即返回 `consultId`；未绑定才回退当前项目，不接管目标原聊天。
+- 核对线程与止损：同一来源会话续接同一 Worker 线程；精确重复请求复用原线程；由代码执行 10 分钟 12 次预算、同目标 2 个并发上限、3 分钟总时长、2 分钟无进展停止。App“运行台”显示路由、轮次、进展、结果与停止原因。
+- 待处理队列：运行台顶部只显示一项最需要人工处理的事项，侧边栏显示数量；可逐项同意/拒绝配对、查看停止的核对或打开失败会话。非配对项支持“稍后处理”并持久化，避免重复打扰。
+- Claude Code / Cursor 项目级 MCP 配置，Codex 用户级 MCP 配置（仅对 ai-bridge 工具自动审批）；原聊天登记、定向收件、询问与答复回传。
 
 专用 CLI 讨论与原工具已有聊天是两种接入方式。普通 MCP 需要原聊天调用收信/查询工具，不能自动唤醒未接收消息的空闲聊天。原会话 ID 备注不代表独立核验或接管聊天。
 
-专用 CLI 跨设备对话已有实测；原会话 MCP 有真实 HTTP 和独立进程自动测试。真实 CC / Cursor 原会话的跨设备闭环仍待联调，本机 CC 最近一次检查在初始模型请求阶段超时。详见 [使用说明](使用说明.md)。
+专用 CLI 跨设备对话已有实测；原会话 MCP 有真实 HTTP 和独立进程自动测试。本机 Codex 原会话 → Claude 只读 Worker → 结果回传已实测；跨设备原会话闭环、Cursor 自动推送仍未验证。详见 [使用说明](使用说明.md)。
 
 ## 源码入口
 
 | 文件 | 职责 |
 | --- | --- |
 | `Desktop.swift` | macOS 窗口、菜单栏、目录选择与后台生命周期 |
-| `desktop.html` / `desktop.js` / `desktop.css` | 五页桌面界面 |
+| `desktop.html` / `desktop.js` / `desktop.css` | 六页桌面界面 |
 | `control.mjs` | 本机 UI API、任务编排与事件流 |
+| `attention.mjs` | 待处理队列的优先级、隐藏规则与跨页面提醒数据 |
+| `consult-policy.mjs` | 核对路由指纹、预算、并发与进展判定 |
 | `bridge.mjs` / `pairing.mjs` | 跨设备协议、工具 CLI 适配与配对 |
 | `workspace.mjs` | SQLite 项目、会话、消息与设置 |
 | `native-inbox.mjs` / `native-mcp.mjs` | 原聊天收件与 MCP 工具 |
-| `native-config.mjs` | 合并项目 MCP 配置 |
+| `native-config.mjs` | 合并项目 MCP 配置与 Codex 用户级配置 |
 | `claude-diagnostics.mjs` | 脱敏诊断摘要 |
 | `*.test.mjs` | 自动测试 |
 | `build-app.sh` | macOS 打包与临时签名 |

@@ -62,6 +62,26 @@ test('restarting inbox never advertises dead sessions or replays pending questio
   }finally{await inbox.close();await rm(dir,{recursive:true,force:true});}
 });
 
+test('managed consultation uses the registered working directory and keeps its lease private',async()=>{
+  const {openNativeInbox}=await import('./native-inbox.mjs');
+  const dir=await mkdtemp(join(tmpdir(),'bridge-native-consult-'));
+  let started;const inbox=await openNativeInbox({dir,
+    consult:async input=>{started=input;return {consultId:'consult-one',status:'running'};},
+    consultResult:async ({session,id,waitMs})=>id==='consult-one'&&session.id?{consultId:id,status:'completed',text:'verified '+waitMs}:null
+  });
+  try{
+    const runtime=JSON.parse(await readFile(join(dir,'native-runtime.json'),'utf8'));
+    const local=async(path,body)=>{const r=await fetch(runtime.url+path,{method:'POST',headers:{authorization:'Bearer '+runtime.token,'content-type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw Error(data.error);return {status:r.status,data};};
+    const session=(await local('/register',{tool:'codex',title:'source',projectPath:process.cwd()})).data;
+    assert.ok(!JSON.stringify(inbox.catalog()).includes(process.cwd()));
+    const response=await local('/consult',{id:session.id,lease:session.lease,tool:'claude',text:'verify module'});
+    assert.equal(response.status,202);assert.equal(started.tool,'claude');assert.equal(started.session.projectPath,process.cwd());assert.equal(started.text,'verify module');
+    const result=await local('/consult/result',{id:session.id,lease:session.lease,consultId:'consult-one',waitMs:0});
+    assert.deepEqual(result.data,{consultId:'consult-one',status:'completed',text:'verified 0'});
+    await assert.rejects(local('/consult',{id:session.id,lease:'wrong',tool:'claude',text:'verify'}),/Session/);
+  }finally{await inbox.close();await rm(dir,{recursive:true,force:true});}
+});
+
 test('expired crashed sessions release capacity and terminate their pending questions',async()=>{
   const {openNativeInbox}=await import('./native-inbox.mjs');let clock=Date.now();
   const dir=await mkdtemp(join(tmpdir(),'bridge-native-expiry-'));
