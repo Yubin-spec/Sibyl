@@ -79,13 +79,13 @@ test('shim targets that are not native executables stay rejected',async t=>{
   await assert.rejects(resolveExecutable('codex',{platform:'win32',env:{PATH:dir}}),/unsupported|executable|npm|batch/i);
 });
 
-test('Claude provider settings fill missing environment keys only',async t=>{
+test('Claude provider settings override the launching environment',async t=>{
   const {agentEnv}=await runtime(),dir=await fixture(t),file=join(dir,'settings.json');
   await writeFile(file,JSON.stringify({env:{ANTHROPIC_BASE_URL:'http://proxy',ANTHROPIC_AUTH_TOKEN:'token',PATH:'/settings/path',BAD_KEY:42}}));
-  const merged=await agentEnv('claude',{PATH:'/shell/path'},{SIBYL_CLAUDE_SETTINGS:file});
+  const merged=await agentEnv('claude',{PATH:'/shell/path',ANTHROPIC_BASE_URL:'http://stale'},{SIBYL_CLAUDE_SETTINGS:file});
   assert.equal(merged.ANTHROPIC_BASE_URL,'http://proxy');
   assert.equal(merged.ANTHROPIC_AUTH_TOKEN,'token');
-  assert.equal(merged.PATH,'/shell/path');
+  assert.equal(merged.PATH,'/settings/path');
   assert.equal('BAD_KEY' in merged,false);
   assert.deepEqual(await agentEnv('codex',{A:'1'},{SIBYL_CLAUDE_SETTINGS:file}),{A:'1'});
   assert.deepEqual(await agentEnv('claude',{SIBYL_CLAUDE_SETTINGS:join(dir,'missing.json')}),{SIBYL_CLAUDE_SETTINGS:join(dir,'missing.json')});

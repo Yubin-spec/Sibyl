@@ -6,7 +6,7 @@ import {dirname,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createInterface} from 'node:readline';
 import {parseArgs} from 'node:util';
-import {resolveAgentExecutable} from '../runtime.mjs';
+import {resolveAgentExecutable,agentEnv} from '../runtime.mjs';
 
 // Opt-in integration check: this invokes authenticated, billable real clients.
 // Hosts stay alive for all turns so MCP ownership and original context persist.
@@ -40,8 +40,8 @@ function findCall(turn,name,predicate=()=>true){
   validation(call.value&&typeof call.value==='object',`Missing structured result for ${name}`);
   return call;
 }
-function childChannel(executable,args,onMessage,onClosed){
-  const child=spawn(executable.command,[...executable.args,...args],{cwd:project,stdio:['pipe','pipe','pipe'],windowsHide:true});
+function childChannel(executable,args,onMessage,onClosed,env=process.env){
+  const child=spawn(executable.command,[...executable.args,...args],{cwd:project,stdio:['pipe','pipe','pipe'],windowsHide:true,env});
   let closed=false,stderrClass='';
   const ended=new Promise(resolveEnd=>child.once('close',(code,signal)=>{closed=true;onClosed(Error('Client exited code '+code+' signal '+signal+(stderrClass?' stderr class '+stderrClass:'')));resolveEnd();}));
   // stderr can contain provider or account metadata. Never retain or print it.
@@ -83,7 +83,7 @@ async function codexHost(executable,mcp){
     return {async turn(prompt){validation(!active,'Overlapping Codex turns');let timer;const done=new Promise((resolveTurn,reject)=>{active={calls:[],text:[],resolve:resolveTurn,reject};timer=setTimeout(()=>{active=null;reject(Error('Codex turn timeout'));},timeout);});try{await request('turn/start',{threadId:result.thread.id,input:[{type:'text',text:prompt}],effort:'low'});return await done;}finally{clearTimeout(timer);}},close:channel.close};
   }catch(error){await channel.close();throw error;}
 }
-function claudeHost(executable,mcp){
+function claudeHost(executable,mcp,env){
   const sessionId=randomUUID();let active;
   const args=['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--session-id',sessionId,'--system-prompt',policy,'--tools','','--allowedTools','mcp__ai-bridge__*','--permission-mode','dontAsk','--permission-prompts','none','--strict-mcp-config','--mcp-config',JSON.stringify({mcpServers:mcp}),'--setting-sources','user','--max-turns','12','--max-budget-usd','3','--effort','low'];
   const channel=childChannel(executable,args,message=>{
@@ -103,7 +103,7 @@ function claudeHost(executable,mcp){
       if(message.result)turn.text.push(message.result);
       message.is_error||message.subtype!=='success'?turn.reject(Error('Claude turn did not complete: '+message.subtype+'; '+errorClass({result:message.result,errors:message.errors,text:turn.text})+'; api status '+(message.api_error_status||'none')+'; terminal '+(message.terminal_reason||'none'))):turn.resolve({calls:turn.calls,text:turn.text.join('\n')});
     }
-  },error=>{active?.reject(error||Error('Claude host exited'));active=null;});
+  },error=>{active?.reject(error||Error('Claude host exited'));active=null;},env);
   report.clients.claude={nativeSessionId:sessionId,sessionId,persistentHost:true};
   return {async turn(prompt){validation(!active,'Overlapping Claude turns');let timer;const done=new Promise((resolveTurn,reject)=>{active={calls:[],text:[],resolve:resolveTurn,reject};timer=setTimeout(()=>{active=null;reject(Error('Claude turn timeout'));},timeout);});channel.send({type:'user',session_id:sessionId,parent_tool_use_id:null,message:{role:'user',content:prompt}});try{return await done;}finally{clearTimeout(timer);}},close:channel.close};
 }
@@ -119,7 +119,8 @@ try{
   const entry=tool=>({command:process.execPath,args:[script,'--dir',dir,'--tool',tool]});
   stage='starting persistent hosts';say(stage);
   codex=await codexHost(codexExecutable,{'ai-bridge':{...entry('codex'),required:true,startup_timeout_sec:15,tool_timeout_sec:35,default_tools_approval_mode:'approve'}});
-  claude=claudeHost(claudeExecutable,{'ai-bridge':entry('claude')});
+  const claudeEnv=await agentEnv('claude',process.env);
+  claude=claudeHost(claudeExecutable,{'ai-bridge':entry('claude')},claudeEnv);
   const marker={codex:'CODEX_CONTEXT_'+randomUUID().replaceAll('-',''),claude:'CLAUDE_CONTEXT_'+randomUUID().replaceAll('-','')};
   report.syntheticMarkers=marker;
   const run=async(client,label,prompt)=>{stage=client+' '+label;say(stage);const turn=await (client==='codex'?codex:claude).turn(prompt);safeTurn(client,label,turn);return turn;};

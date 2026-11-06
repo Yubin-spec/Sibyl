@@ -65,7 +65,7 @@ bridge_result（等待中才需要）
 
 CCswitch、claude-code-router 一类工具会把 Claude Code 指向别的模型服务，provider 配置写在 `~/.claude/settings.json` 的 `env` 里（base URL、令牌、模型别名）。交互式 CLI 会读这个文件，但后台进程不会自动继承，表现为 CLI 报 `Not logged in · Please run /login`。
 
-浏览器版启动器现在会合并该文件的 `env`：只补当前进程缺失的键，不覆盖已有环境变量。需要换位置时设置 `SIBYL_CLAUDE_SETTINGS`（直接指向文件）或 `CLAUDE_CONFIG_DIR`（指向配置目录）。
+浏览器版启动器现在会合并该文件的 `env`，并以文件里的值为准（与 Claude Code 自身一致）：切换中转后，旧的 base URL 或模型别名不会继续生效。需要换位置时设置 `SIBYL_CLAUDE_SETTINGS`（直接指向文件）或 `CLAUDE_CONFIG_DIR`（指向配置目录）。
 
 ### WinGet 安装的 Codex
 

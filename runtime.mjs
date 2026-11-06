@@ -152,10 +152,10 @@ export async function claudeSettingsEnv({env=process.env,home=homedir(),platform
   }catch{return {};}
 }
 
+// Claude Code applies settings.json env over the launching environment, so a
+// provider switch in the file wins over a stale base URL or model alias.
 export async function agentEnv(agent,base=process.env,overrides={}) {
   if(agent!=='claude') return base;
   const settings=await claudeSettingsEnv({env:{...base,...overrides}});
-  const merged={...base};
-  for(const [key,value] of Object.entries(settings)) if(!(key in merged)) merged[key]=value;
-  return merged;
+  return {...base,...settings};
 }
