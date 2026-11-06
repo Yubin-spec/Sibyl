@@ -65,14 +65,14 @@ async function windowsShellShim(path) {
   if(!text||text.length>4096) return null;
   const lines=text.split(/\r?\n/);
   if(!/^#![^\r\n]*\b(?:bash|sh)\b/.test(lines[0]||'')) return null;
-  for(const line of lines.slice(1)) {
-    const match=/^exec\s+(?:"([^"]+)"|(\S+))\s+"\$@"$/.exec(line.trim());
-    if(!match) continue;
-    const target=windowsNative(windowsPath(match[1]||match[2]));
-    if(target&&await isFile(target.command,{platform:'win32'})) return target;
-    return null;
-  }
-  return null;
+  // A forwarded exec is only trustworthy when it is the script's sole statement;
+  // anything else (exit, conditions, a second exec) means real control flow.
+  const body=lines.slice(1).map(line=>line.trim()).filter(line=>line&&!line.startsWith('#'));
+  if(body.length!==1) return null;
+  const match=/^exec\s+(?:"([^"]+)"|(\S+))\s+"\$@"$/.exec(body[0]);
+  if(!match) return null;
+  const target=windowsNative(windowsPath(match[1]||match[2]));
+  return target&&await isFile(target.command,{platform:'win32'})?target:null;
 }
 
 async function executableEntry(path,{platform,nodePath}) {
@@ -152,10 +152,22 @@ export async function claudeSettingsEnv({env=process.env,home=homedir(),platform
   }catch{return {};}
 }
 
+function mergeEnvironment(base,settings,platform) {
+  if(platform!=='win32') return {...base,...settings};
+  const merged={...base},index=new Map();
+  for(const key of Object.keys(merged)) index.set(key.toUpperCase(),key);
+  for(const [key,value] of Object.entries(settings)) {
+    const existing=index.get(key.toUpperCase());
+    if(existing&&existing!==key) delete merged[existing];
+    merged[key]=value;index.set(key.toUpperCase(),key);
+  }
+  return merged;
+}
+
 // Claude Code applies settings.json env over the launching environment, so a
 // provider switch in the file wins over a stale base URL or model alias.
-export async function agentEnv(agent,base=process.env,overrides={}) {
+export async function agentEnv(agent,base=process.env,overrides={},platform=process.platform) {
   if(agent!=='claude') return base;
-  const settings=await claudeSettingsEnv({env:{...base,...overrides}});
-  return {...base,...settings};
+  const settings=await claudeSettingsEnv({env:{...base,...overrides},platform});
+  return mergeEnvironment(base,settings,platform);
 }

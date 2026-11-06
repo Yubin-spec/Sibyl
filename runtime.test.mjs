@@ -79,6 +79,22 @@ test('shim targets that are not native executables stay rejected',async t=>{
   await assert.rejects(resolveExecutable('codex',{platform:'win32',env:{PATH:dir}}),/unsupported|executable|npm|batch/i);
 });
 
+test('shell shims with extra control flow are not followed',async t=>{
+  const {resolveExecutable}=await runtime(),dir=await fixture(t),native=join(dir,'other.exe');
+  await writeFile(native,'native fixture');
+  await writeFile(join(dir,'codex'),'#!/bin/sh\nexit 0\nexec "'+native+'" "$@"\n');
+  await assert.rejects(resolveExecutable('codex',{platform:'win32',env:{PATH:dir}}),/unsupported|executable|npm|batch/i);
+});
+
+test('Windows merges provider settings into a case-insensitive environment',async t=>{
+  const {agentEnv}=await runtime(),dir=await fixture(t),file=join(dir,'settings.json');
+  await writeFile(file,JSON.stringify({env:{PATH:'C:\\settings'}}));
+  const merged=await agentEnv('claude',{Path:'C:\\shell',OTHER:'1'},{SIBYL_CLAUDE_SETTINGS:file},'win32');
+  assert.equal(merged.PATH,'C:\\settings');
+  assert.equal('Path' in merged,false);
+  assert.equal(merged.OTHER,'1');
+});
+
 test('Claude provider settings override the launching environment',async t=>{
   const {agentEnv}=await runtime(),dir=await fixture(t),file=join(dir,'settings.json');
   await writeFile(file,JSON.stringify({env:{ANTHROPIC_BASE_URL:'http://proxy',ANTHROPIC_AUTH_TOKEN:'token',PATH:'/settings/path',BAD_KEY:42}}));
