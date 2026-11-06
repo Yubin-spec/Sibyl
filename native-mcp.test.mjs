@@ -18,6 +18,35 @@ function client(dir,tool){
  return {async call(method,params={}){const id=++serial;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(id);reject(Error('MCP tool timeout'));},5000);pending.set(id,{resolve:v=>{clearTimeout(timer);resolve(v);},reject:e=>{clearTimeout(timer);reject(e);}});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});},async tool(name,args={}){const value=await this.call('tools/call',{name,arguments:args});if(value.isError)throw Error(value.content[0].text);return JSON.parse(value.content[0].text);},async close(){if(child.exitCode!==null)return;child.stdin.end();await new Promise(r=>child.once('close',r));}};
 }
 
+test('same-computer original chats ask both ways, recover results and reject foreign handles without pairing',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'bridge-local-mcp-'));
+ const inbox=await openNativeInbox({dir}),codex=client(dir,'codex'),claude=client(dir,'claude'),foreign=client(dir,'codex');
+ try{
+  const a=await codex.tool('bridge_open_session',{title:'Codex original task'});
+  const b=await claude.tool('bridge_open_session',{title:'Claude original task'});
+  assert.ok((await codex.tool('bridge_list_peers')).peers.some(p=>p.id==='local'));
+  assert.deepEqual((await codex.tool('bridge_list_sessions',{connectionId:'local'})).sessions.map(s=>s.id).sort(),[a.id,b.id].sort());
+  const ask=codex.tool('bridge_ask',{sessionId:a.id,connectionId:'local',targetSessionId:b.id,text:'Which field?',waitMs:3000});
+  ask.catch(()=>{});
+  const {messages:[q]}=await claude.tool('bridge_receive',{sessionId:b.id,waitMs:3000});
+  assert.equal(q.text,'Which field?');
+  await assert.rejects(foreign.tool('bridge_reply',{sessionId:b.id,questionId:q.id,peerId:q.peerId,text:'spoof'}),/this MCP/);
+  await assert.rejects(codex.tool('bridge_reply',{sessionId:a.id,questionId:q.id,peerId:q.peerId,text:'spoof'}),/Question/);
+  await claude.tool('bridge_reply',{sessionId:b.id,questionId:q.id,peerId:q.peerId,text:'account_id'});
+  assert.equal((await ask).answer,'account_id');
+  assert.equal((await codex.tool('bridge_result',{sessionId:a.id,questionId:q.id,waitMs:0})).answer,'account_id');
+  const reverse=await claude.tool('bridge_ask',{sessionId:b.id,connectionId:'local',targetSessionId:a.id,text:'Which validation?',waitMs:0});
+  assert.equal(reverse.status,'queued');
+  const {messages:[r]}=await codex.tool('bridge_receive',{sessionId:a.id,waitMs:0});
+  await assert.rejects(codex.tool('bridge_result',{sessionId:a.id,questionId:r.id,waitMs:0}),/belong/);
+  await codex.tool('bridge_reply',{sessionId:a.id,questionId:r.id,peerId:r.peerId,text:'Reject empty identifiers'});
+  assert.equal((await claude.tool('bridge_result',{sessionId:b.id,questionId:r.id,waitMs:0})).answer,'Reject empty identifiers');
+  assert.equal(inbox.snapshot().questions.length,2);
+  await claude.tool('bridge_close_session',{sessionId:b.id});
+  await assert.rejects(codex.tool('bridge_ask',{sessionId:a.id,connectionId:'local',targetSessionId:b.id,text:'offline',waitMs:0}),/offline/);
+ }finally{await codex.close();await claude.close();await foreign.close();await inbox.close();await rm(dir,{recursive:true,force:true});}
+});
+
 test('MCP answer returns on the original ask call and stays isolated from another chat',async()=>{
  const root=await mkdtemp(join(tmpdir(),'bridge-mcp-'));const aDir=join(root,'a'),bDir=join(root,'b');
  const a=await openNativeInbox({dir:aDir}),b=await openNativeInbox({dir:bDir});

@@ -3,20 +3,20 @@ import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join,dirname,resolve} from 'node:path';
+import {join,dirname,delimiter} from 'node:path';
 import net from 'node:net';
 import {fileURLToPath} from 'node:url';
 import {runProcess} from './bridge.mjs';
 
 test('CLI pairing approval, real HTTP check, agent selection and human-directed discussion', {timeout:30000},async()=>{
-  const dir=await mkdtemp(join(tmpdir(),'bridge-cli-'));
+  const dir=await mkdtemp(join(tmpdir(),'bridge cli 中文-'));
   const bin=join(dir,'bin');await mkdir(bin);
   const script=fileURLToPath(new URL('./bridge.mjs',import.meta.url));
   const fake=`#!/usr/bin/env node
 import {readFileSync,writeFileSync,appendFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {basename,join} from 'node:path';
-const name=basename(process.argv[1]),args=process.argv.slice(2),root=process.env.BRIDGE_TEST_DATA;
+const name=basename(process.argv[1]).replace(/\\.mjs$/,''),args=process.argv.slice(2),root=process.env.BRIDGE_TEST_DATA;
 if(args.includes('--version')){console.log(name+' test-version');process.exit(0);}
 let prompt='';if(name==='cursor-agent') prompt=args.at(-1);else for await(const chunk of process.stdin) prompt+=chunk;
 appendFileSync(join(root,'calls'),name+'\\n');
@@ -31,14 +31,24 @@ else if(prompt.includes('完整校验词')) result=readFileSync(file,'utf8');
 if(name==='codex'){console.log(JSON.stringify({type:'thread.started',thread_id:session}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:result}}));console.log(JSON.stringify({type:'turn.completed'}));}
 else console.log(JSON.stringify({session_id:session,result,is_error:false}));
 `;
-  for(const name of ['codex','claude','cursor-agent']) await writeFile(join(bin,name),fake,{mode:0o755});
+  for(const name of ['codex','claude','cursor-agent']) {
+    if(process.platform==='win32') {
+      const pkg=join(bin,'node_modules','fake-'+name);await mkdir(pkg,{recursive:true});
+      await writeFile(join(pkg,'package.json'),JSON.stringify({name:'fake-'+name,bin:{[name]:name+'.mjs'}}));
+      await writeFile(join(pkg,name+'.mjs'),fake);
+      // The runtime resolves npm bin metadata and executes Node directly. Batch
+      // contents must never be evaluated while discovering the executable.
+      await writeFile(join(bin,name+'.cmd'),'@echo off\r\nexit /b 99\r\n');
+    } else await writeFile(join(bin,name),fake,{mode:0o755});
+  }
   const listener=net.createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));const port=listener.address().port;await new Promise(r=>listener.close(r));
   const oldPath=process.env.PATH,oldData=process.env.BRIDGE_TEST_DATA;
-  process.env.PATH=bin+':'+dirname(process.execPath)+':/usr/bin:/bin';process.env.BRIDGE_TEST_DATA=dir;
+  process.env.PATH=[bin,dirname(process.execPath),...(process.platform==='win32'?[join(process.env.SystemRoot||'C:\\Windows','System32')]:['/usr/bin','/bin'])].join(delimiter);process.env.BRIDGE_TEST_DATA=dir;
   const server=spawn(process.execPath,[script,'serve','--state',join(dir,'state'),'--project',dir,'--port',String(port)],{stdio:['pipe','pipe','pipe']});
-  let output='',approved=false;
+  let output='',errors='',approved=false;
+  server.stderr.on('data',data=>{errors+=data;});
   server.stdout.on('data',data=>{output+=data;const id=output.match(/approve ([a-f0-9-]{36})/)?.[1];if(id&&!approved){approved=true;server.stdin.write('approve '+id+'\n');}});
-  const waitFor=async pattern=>{for(let i=0;i<100;i++){if(pattern.test(output)) return;await new Promise(r=>setTimeout(r,30));}throw Error('Server did not become ready: '+output);};
+  const waitFor=async pattern=>{for(let i=0;i<100;i++){if(pattern.test(output)) return;if(server.exitCode!==null) break;await new Promise(r=>setTimeout(r,30));}throw Error('Server did not become ready: '+output+errors);};
   try{
     await waitFor(/一次性配对码.*\d{8}/);
     const code=output.match(/一次性配对码[^\n]*?(\d{8})/)[1];
@@ -61,7 +71,9 @@ else console.log(JSON.stringify({session_id:session,result,is_error:false}));
     assert.equal(lines[0].session,lines[4].session);
     assert.equal((await readFile(join(dir,'calls'),'utf8')).trim().split('\n').length,10);
   }finally{
-    server.kill('SIGTERM');await new Promise(r=>server.once('close',r));
+    if(server.exitCode===null&&server.signalCode===null) {
+      const closed=new Promise(r=>server.once('close',r));server.kill('SIGTERM');await closed;
+    }
     if(oldPath===undefined) delete process.env.PATH;else process.env.PATH=oldPath;
     if(oldData===undefined) delete process.env.BRIDGE_TEST_DATA;else process.env.BRIDGE_TEST_DATA=oldData;
     await rm(dir,{recursive:true,force:true});

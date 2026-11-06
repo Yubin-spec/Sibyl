@@ -1,22 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, symlink, stat } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, rm, symlink, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'workspace-'));
-  t.after(() => rm(root, {recursive:true,force:true}));
   const {openWorkspace} = await import('./workspace.mjs');
   const dir = join(root,'data');
-  const w = await openWorkspace(dir);
-  t.after(() => {try {w.close();} catch {}});
+  const handles = [];
+  const open = async () => {const w=await openWorkspace(dir);handles.push(w);return w;};
+  t.after(async () => {
+    // Windows cannot remove an open SQLite file. Keep close and removal in one
+    // hook so later reopens are also closed before deleting the fixture.
+    for (const w of handles) {try {w.close();} catch(error) {if(error.code!=='ERR_INVALID_STATE') throw error;}}
+    await rm(root, {recursive:true,force:true});
+  });
+  const w = await open();
   await mkdir(join(root,'a')); await mkdir(join(root,'b'));
-  return {root,dir,w};
+  return {root,dir,w,open};
 }
 
 test('persists defaults, stable identity, private database and interrupted recovery', async t => {
-  const {w,dir,root}=await fixture(t); const id=w.snapshot().device.id;
+  const {w,dir,root,open}=await fixture(t); const id=w.snapshot().device.id;
   assert.equal(w.snapshot().settings.networkPort,47831);
   w.setDevice({name:"Bob's device",owner:'Me'});
   w.updateSettings({page:'projects',closeToTray:false,networkPort:50000});
@@ -24,17 +31,26 @@ test('persists defaults, stable identity, private database and interrupted recov
   const s=w.registerSession({projectId:p.id,tool:'codex',title:'test'});
   const c=w.createConversation({title:'work',projectId:p.id,localSessionId:s.id,connectionId:'local',remoteAgent:'claude'});
   w.updateConversation(c.id,{status:'running'});w.close();
-  const {openWorkspace}=await import('./workspace.mjs'); const reopened=await openWorkspace(dir);t.after(()=>reopened.close());
+  const reopened=await open();
   assert.equal(reopened.snapshot().device.id,id); assert.equal(reopened.snapshot().device.name,"Bob's device");
   assert.equal(reopened.getConversation(c.id).status,'failed');
   assert.equal(reopened.getProject(p.id).name,"quoted ' project");
-  assert.equal((await stat(join(dir,'workspace.sqlite'))).mode & 0o777,0o600);
+  const file=join(dir,'workspace.sqlite'),metadata=await stat(file);
+  if(process.platform==='win32') {
+    // Windows chmod exposes the writable attribute, not POSIX ACL privacy.
+    // Verify an actual readable/writable SQLite file while persistence remains
+    // covered above; owner-only mode is checked on platforms that support it.
+    assert.ok(metadata.isFile());
+    assert.equal(metadata.mode & 0o600,0o600);
+    await access(file,constants.R_OK | constants.W_OK);
+    assert.equal((await readFile(file)).subarray(0,16).toString(),'SQLite format 3\0');
+  } else assert.equal(metadata.mode & 0o777,0o600);
   assert.equal('messages' in reopened.snapshot(),false);
 });
 
 test('canonical projects and session/conversation references stay isolated',async t=>{
   const {root,w}=await fixture(t);const p=w.saveProject({name:'A',path:join(root,'a')});
-  await symlink(join(root,'a'),join(root,'alias'));
+  await symlink(join(root,'a'),join(root,'alias'),process.platform==='win32'?'junction':'dir');
   assert.equal(w.saveProject({name:'alias',path:join(root,'alias')}).id,p.id);
   const q=w.saveProject({name:'B',path:join(root,'b')});
   assert.throws(()=>w.saveProject({name:'missing',path:join(root,'missing')}));
@@ -89,13 +105,12 @@ test('settings, session patches and conversation fields reject unsafe input atom
 });
 
 test('explicit project ID renames the same canonical path and persists on reopen', async t => {
-  const {root,dir,w}=await fixture(t);
+  const {root,w,open}=await fixture(t);
   const before=w.saveProject({name:'before',path:join(root,'a')});
   const renamed=w.saveProject({id:before.id,name:'after',path:before.path});
   assert.deepEqual(renamed,{...before,name:'after'});
   w.close();
-  const {openWorkspace}=await import('./workspace.mjs');
-  const reopened=await openWorkspace(dir);t.after(()=>reopened.close());
+  const reopened=await open();
   assert.deepEqual(reopened.getProject(before.id),renamed);
   assert.equal(reopened.snapshot().projects.length,1);
 });

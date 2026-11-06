@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {defaultDataDir} from './runtime.mjs';
 import {spawn} from 'node:child_process';
 import {createConnection} from 'node:net';
 import {readFile,writeFile,mkdir,readdir,rename,rm} from 'node:fs/promises';
@@ -17,7 +18,7 @@ import {attentionItems} from './attention.mjs';
 const source=fileURLToPath(new URL('.',import.meta.url));
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const version=JSON.parse(await readFile(new URL('./package.json',import.meta.url),'utf8')).version;
-export async function createControl({dir,detect=detectAgents,runner=(prompt,session,signal,project,agent,options)=>agentRunner(agent,prompt,session,signal,project,options),healthInterval=15000,consultLimits={}}={}) {
+export async function createControl({dir=defaultDataDir(),onShutdown,detect=detectAgents,runner=(prompt,session,signal,project,agent,options)=>agentRunner(agent,prompt,session,signal,project,options),healthInterval=15000,consultLimits={}}={}) {
  await mkdir(join(dir,'connections'),{recursive:true,mode:0o700});
  let notifyNative=()=>{},consultStart,consultResult,consultStop;const nativeInbox=await openNativeInbox({dir,onChange:()=>notifyNative(),consult:input=>consultStart(input),consultResult:input=>consultResult(input),consultStop:input=>consultStop(input)});let store;try{store=await openWorkspace(dir);}catch(e){await nativeInbox.close();throw e;}
  const csrf=randomBytes(32).toString('hex'),connections=new Map(),requests=new Map(),streams=new Set(),operations=[],incoming=new Map(),consultJobs=new Map(),limits=normalizeConsultLimits(consultLimits);
@@ -91,6 +92,7 @@ consultStart=async({session,tool,projectId,text})=>{
  if(req.method==='GET'&&path==='/api/update')return send(200,await checkUpdate());
  if(req.method==='GET'){if(path==='/api/status')return send(200,state());if(path==='/api/events'){res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-store','connection':'keep-alive'});res.write(`data: ${JSON.stringify({type:'state',state:state(true)})}\n\n`);streams.add(res);req.on('close',()=>streams.delete(res));return;}if(path==='/api/conversations/messages')return send(200,store.messages(url.searchParams.get('id'),{after:Number(url.searchParams.get('after')||0),limit:Number(url.searchParams.get('limit')||100)}));if(path==='/api/native/sessions'){const c=await credential(url.searchParams.get('id'));return send(200,await makeClient(c.url,c.token)('/native/sessions'));}if(path==='/api/peer/catalog'){const c=await credential(url.searchParams.get('id'));return send(200,await makeClient(c.url,c.token)('/catalog'));}return send(404,{error:'Unknown endpoint'});}
  if(req.method!=='POST')return send(404,{error:'Unknown endpoint'});let raw='';for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>32000)throw Error('Request too large');}const body=JSON.parse(raw||'{}');let result={ok:true};
+ if(path==='/api/shutdown'){if(!onShutdown)throw Error('Shutdown is not available for this host');send(200,{ok:true});setImmediate(()=>onShutdown());return;}
  if(path==='/api/update/download'){result=await downloadUpdate();send(200,result);return;}
  if(path==='/api/device')result=store.setDevice(body);
  else if(path==='/api/settings')result=store.updateSettings(body);
@@ -124,4 +126,14 @@ consultStart=async({session,tool,projectId,text})=>{
  const heartbeat=setInterval(()=>{for(const id of connections.keys())refresh(id).catch(()=>{});for(const res of streams)res.write(': keepalive\n\n');},healthInterval);heartbeat.unref();
  return {server,csrf,store,async close(){closed=true;clearInterval(heartbeat);await stop().catch(()=>{});for(const res of streams)res.end();streams.clear();if(host){host.cancel();await new Promise(r=>host.server.close(r));}await Promise.allSettled(operations.map(o=>o.promise));await Promise.allSettled([...refreshing.values()]);await saveQueue;await nativeInbox.close();await new Promise(r=>server.close(r));store.close();}};
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){const dir=process.argv[2]||join(process.env.HOME,'Library','Application Support','AI Bridge');const control=await createControl({dir});control.server.listen(0,'127.0.0.1',()=>console.log(`BRIDGE_UI_READY=http://127.0.0.1:${control.server.address().port}`));for(const signal of ['SIGINT','SIGTERM'])process.once(signal,async()=>{await control.close();process.exit(0);});}
+if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
+ const dir=process.argv[2]||defaultDataDir(),runtimeFile=join(dir,'browser-runtime.json');
+ let closing=false;
+ const shutdown=async()=>{if(closing)return;closing=true;try{await control.close();const record=JSON.parse(await readFile(runtimeFile,'utf8').catch(()=>'{}'));if(record.pid===process.pid)await rm(runtimeFile,{force:true});process.exit(0);}catch(e){console.error(e.message);process.exit(1);}};
+ const control=await createControl({dir,onShutdown:shutdown});
+ await new Promise((yes,no)=>{control.server.once('error',no);control.server.listen(0,'127.0.0.1',yes);});
+ const url=`http://127.0.0.1:${control.server.address().port}`;
+ await writeFile(runtimeFile,JSON.stringify({pid:process.pid,url}),{mode:0o600});
+ console.log(`BRIDGE_UI_READY=${url}`);
+ for(const signal of ['SIGINT','SIGTERM'])process.once(signal,shutdown);
+}

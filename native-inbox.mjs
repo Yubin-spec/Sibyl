@@ -71,7 +71,11 @@ async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consu
         const s={id:randomUUID(),lease:randomBytes(32).toString('hex'),title:body.title,tool:body.tool,projectId:body.projectId,projectPath:body.projectPath,nativeSessionId:body.nativeSessionId,touched:now()};
         sessions.set(s.id,s);changed();return send(200,{...publicSession(s),lease:s.lease});
       }
+      if(req.url==='/sessions')return send(200,{sessions:catalog()});
       const s=own(body);
+      // Local callers authenticate their session lease; never accept a self-reported source.
+      if(req.url==='/ask')return send(202,await request({id:'local:'+s.id},{id:body.questionId,targetSessionId:body.targetSessionId,text:body.text,source:{id:s.id,title:s.title,tool:s.tool}}));
+      if(req.url==='/result')return send(200,await result({id:'local:'+s.id},body.questionId));
       if(req.url==='/touch')return send(200,{ok:true});
       if(req.url==='/close'){
         sessions.delete(s.id);for(const q of questions)if(q.targetSessionId===s.id&&['queued','delivered'].includes(q.status))q.status='recipient-offline';await save();changed();return send(200,{ok:true});

@@ -4,6 +4,8 @@
 
 当前版本 **0.5.0**。桌面端使用 Swift / AppKit / 系统 WebView，桥接服务使用 Node.js，项目、讨论与核对线程使用 SQLite。无第三方 npm 依赖。
 
+本地 Windows 浏览器适配版：双击 `start-browser.cmd` 启动，支持 Codex / Claude Code 原聊天的同机 MCP 问答。启动、停止和原会话接入步骤见 [Windows 浏览器版说明](docs/Windows-browser.md)。
+
 下载安装包：[yubin-spec.github.io/Sibyl](https://yubin-spec.github.io/Sibyl/)（直达 GitHub Releases，无网盘或广告跳转）。App 的“设置 → 版本与更新”可直接检查并下载新版本。
 
 ## 开发与构建
