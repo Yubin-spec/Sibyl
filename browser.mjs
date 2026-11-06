@@ -3,7 +3,7 @@ import {open,mkdir,readFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
-import {defaultDataDir} from './runtime.mjs';
+import {defaultDataDir,agentEnv} from './runtime.mjs';
 
 const {values}=parseArgs({options:{dir:{type:'string',default:defaultDataDir()},'no-open':{type:'boolean'},stop:{type:'boolean'}}});
 if(Number(process.versions.node.split('.')[0])<26)throw Error('Node.js 26 or newer is required. Use start-browser.cmd on Windows.');
@@ -32,7 +32,7 @@ if(values.stop){
  if(!r){
   await mkdir(dir,{recursive:true,mode:0o700});
   const log=await open(join(dir,'server.log'),'a',0o600);
-  const child=spawn(process.execPath,[fileURLToPath(new URL('./control.mjs',import.meta.url)),dir],{cwd:dir,detached:true,windowsHide:true,stdio:['ignore',log.fd,log.fd]});
+  const child=spawn(process.execPath,[fileURLToPath(new URL('./control.mjs',import.meta.url)),dir],{cwd:dir,detached:true,windowsHide:true,stdio:['ignore',log.fd,log.fd],env:await agentEnv('claude',process.env)});
   let failure;child.once('error',e=>failure=e);child.unref();await log.close();
   for(let i=0;i<150;i++){if(failure)throw failure;r=await running();if(r)break;await pause(100);}
   if(!r)throw Error('Bridge did not start. Inspect '+join(dir,'server.log'));

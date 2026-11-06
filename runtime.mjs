@@ -1,7 +1,7 @@
 import {access,readFile,readdir,stat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {homedir} from 'node:os';
-import {basename,dirname,extname,join,posix,relative,resolve,sep,win32} from 'node:path';
+import {basename,dirname,extname,isAbsolute,join,posix,relative,resolve,sep,win32} from 'node:path';
 
 export function defaultDataDir({platform=process.platform,env=process.env,home=homedir()}={}) {
   if(platform==='win32') return win32.join(env.LOCALAPPDATA||win32.join(home,'AppData','Local'),'AI Bridge');
@@ -39,6 +39,42 @@ async function npmPackages(root) {
   return packages;
 }
 
+function windowsNative(path) {
+  return typeof path==='string'&&isAbsolute(path)&&['.exe','.com'].includes(extname(path).toLowerCase())?{command:path,args:[]}:null;
+}
+
+// Installers point at a native executable through a one-line wrapper. Read the
+// file and launch that executable directly; the wrapper itself never runs.
+async function windowsBatchTarget(path) {
+  const text=await readFile(path,'utf8').catch(()=>null);
+  if(!text||text.length>4096) return null;
+  const lines=text.split(/\r?\n/).map(line=>line.trim()).filter(line=>line&&!/^@?echo\s+off$/i.test(line));
+  if(lines.length!==1) return null;
+  const match=/^"([^"%]+\.(?:exe|com))"\s+%\*$/i.exec(lines[0]);
+  const target=match&&windowsNative(match[1]);
+  return target&&await isFile(target.command,{platform:'win32'})?target:null;
+}
+
+function windowsPath(value) {
+  const drive=/^\/([a-zA-Z])\/(.+)$/.exec(value);
+  return drive?drive[1].toUpperCase()+':\\'+drive[2].replaceAll('/','\\'):value;
+}
+
+async function windowsShellShim(path) {
+  const text=await readFile(path,'utf8').catch(()=>null);
+  if(!text||text.length>4096) return null;
+  const lines=text.split(/\r?\n/);
+  if(!/^#![^\r\n]*\b(?:bash|sh)\b/.test(lines[0]||'')) return null;
+  for(const line of lines.slice(1)) {
+    const match=/^exec\s+(?:"([^"]+)"|(\S+))\s+"\$@"$/.exec(line.trim());
+    if(!match) continue;
+    const target=windowsNative(windowsPath(match[1]||match[2]));
+    if(target&&await isFile(target.command,{platform:'win32'})) return target;
+    return null;
+  }
+  return null;
+}
+
 async function executableEntry(path,{platform,nodePath}) {
   if(!(await isFile(path,{platform:'win32'}))) throw notFound(path);
   const extension=extname(path).toLowerCase();
@@ -49,6 +85,8 @@ async function executableEntry(path,{platform,nodePath}) {
     // Windows batch wrappers; invoke the Node entry with a separate argv item.
     const firstLine=(await readFile(path,'utf8')).split(/\r?\n/,1)[0];
     if(/^#![^\r\n]*\bnode(?:\s|$)/.test(firstLine)) return {command:nodePath,args:[path]};
+    const shim=await windowsShellShim(path);
+    if(shim) return shim;
     throw Error('Unsupported executable; configure a native executable or Node entry file');
   }
   if(!(await isFile(path,{platform}))) throw notFound(path);
@@ -80,7 +118,8 @@ export async function resolveExecutable(command,{platform=process.platform,env=p
       const path=resolve(cwd,directory,command+extension);
       if(!(await isFile(path,{platform:'win32'}))) continue;
       try {
-        if(['.cmd','.ps1','.bat'].includes(extname(path).toLowerCase())) return await npmShim(path,options);
+        if(['.cmd','.bat'].includes(extname(path).toLowerCase())) {const direct=await windowsBatchTarget(path);if(direct) return direct;return await npmShim(path,options);}
+        if(extname(path).toLowerCase()==='.ps1') return await npmShim(path,options);
         return await executableEntry(path,options);
       }catch(error){if(hasPath) throw error;unsupported=error;}
     }
@@ -98,4 +137,25 @@ export async function resolveAgentExecutable(agent,options={}) {
     try{return await resolveExecutable(command,options);}catch(error){if(error.code!=='ENOENT') throw error;failure=error;}
   }
   throw failure;
+}
+
+// Claude Code keeps provider switches (base URL, token, model aliases) in
+// settings.json. Long-running hosts do not inherit that file's env, so merge it
+// under whatever the process already has.
+export async function claudeSettingsEnv({env=process.env,home=homedir(),platform=process.platform}={}) {
+  const file=environmentValue(env,'SIBYL_CLAUDE_SETTINGS',platform)||join(environmentValue(env,'CLAUDE_CONFIG_DIR',platform)||join(home,'.claude'),'settings.json');
+  try {
+    const data=JSON.parse(await readFile(file,'utf8'));
+    const values=data?.env;
+    if(!values||typeof values!=='object'||Array.isArray(values)) return {};
+    return Object.fromEntries(Object.entries(values).filter(([key,value])=>typeof value==='string'&&/^[A-Z][A-Z0-9_]*$/.test(key)));
+  }catch{return {};}
+}
+
+export async function agentEnv(agent,base=process.env,overrides={}) {
+  if(agent!=='claude') return base;
+  const settings=await claudeSettingsEnv({env:{...base,...overrides}});
+  const merged={...base};
+  for(const [key,value] of Object.entries(settings)) if(!(key in merged)) merged[key]=value;
+  return merged;
 }

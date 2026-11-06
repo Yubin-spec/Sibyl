@@ -59,6 +59,18 @@ bridge_result（等待中才需要）
 
 已有原会话的执行工具也可调用 `scripts/live-session-mcp.mjs`：它仅保持 MCP 传输，不启动、续接或替换模型。传入 `--session 原生会话ID --tool codex`（或 `claude`），以 `open` 登记，再调用 `sessions / receive / ask / result / reply`；参数可用 `--args-file` 传入 JSON，避免 shell 引号问题。返回值是原始 MCP 结果，正文位于 `content[0].text`。多次命令复用同一连接；`close` 注销，或在 30 分钟无命令后自动退出。填写会话 ID 本身不会接管任何聊天，实际发起这些命令的仍必须是该原会话。
 
+## 环境与可执行文件
+
+### 通过中转使用 Claude Code
+
+CCswitch、claude-code-router 一类工具会把 Claude Code 指向别的模型服务，provider 配置写在 `~/.claude/settings.json` 的 `env` 里（base URL、令牌、模型别名）。交互式 CLI 会读这个文件，但后台进程不会自动继承，表现为 CLI 报 `Not logged in · Please run /login`。
+
+浏览器版启动器现在会合并该文件的 `env`：只补当前进程缺失的键，不覆盖已有环境变量。需要换位置时设置 `SIBYL_CLAUDE_SETTINGS`（直接指向文件）或 `CLAUDE_CONFIG_DIR`（指向配置目录）。
+
+### WinGet 安装的 Codex
+
+WinGet 只在 PATH 上放 `codex.cmd` 和 bash shim，不带 `.exe`。启动器会读取包装脚本里指向的原生可执行文件并直接启动它，不会执行批处理内容；无法解析时才需要 `SIBYL_CODEX_PATH` 指向真实 `.exe`。
+
 ## 诊断与验证
 
 后台日志在数据目录的 `server.log`。可用 `SIBYL_CODEX_PATH` / `SIBYL_CLAUDE_PATH` 指向明确的原生可执行文件。支持安全解析 npm 启动入口，不需要将模型提示词拼接进 shell。

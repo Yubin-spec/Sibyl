@@ -58,6 +58,39 @@ test('PATH discovery skips unsupported wrappers to find a later native executabl
   assert.deepEqual(await resolveExecutable('codex',{platform:'win32',env:{PATH:dir+';'+later}}),{command:native,args:[]});
 });
 
+test('Windows installer batch wrappers resolve to their quoted native executable',async t=>{
+  const {resolveExecutable}=await runtime(),dir=await fixture(t),native=join(dir,'codex.exe');
+  await writeFile(native,'native fixture');
+  await writeFile(join(dir,'codex.cmd'),'@echo off\r\n"'+native+'" %*\r\n');
+  assert.deepEqual(await resolveExecutable('codex',{platform:'win32',env:{PATH:dir}}),{command:native,args:[]});
+});
+
+test('Windows bash shims resolve their exec target without running the shell',async t=>{
+  const {resolveExecutable}=await runtime(),dir=await fixture(t),native=join(dir,'codex.exe');
+  await writeFile(native,'native fixture');
+  await writeFile(join(dir,'codex'),'#!/usr/bin/env bash\nexec "'+native+'" "$@"\n');
+  assert.deepEqual(await resolveExecutable('codex',{platform:'win32',env:{PATH:dir}}),{command:native,args:[]});
+});
+
+test('shim targets that are not native executables stay rejected',async t=>{
+  const {resolveExecutable}=await runtime(),dir=await fixture(t);
+  await writeFile(join(dir,'script.bat'),'@echo off\r\necho unsafe\r\n');
+  await writeFile(join(dir,'codex'),'#!/usr/bin/env bash\nexec "'+join(dir,'script.bat')+'" "$@"\n');
+  await assert.rejects(resolveExecutable('codex',{platform:'win32',env:{PATH:dir}}),/unsupported|executable|npm|batch/i);
+});
+
+test('Claude provider settings fill missing environment keys only',async t=>{
+  const {agentEnv}=await runtime(),dir=await fixture(t),file=join(dir,'settings.json');
+  await writeFile(file,JSON.stringify({env:{ANTHROPIC_BASE_URL:'http://proxy',ANTHROPIC_AUTH_TOKEN:'token',PATH:'/settings/path',BAD_KEY:42}}));
+  const merged=await agentEnv('claude',{PATH:'/shell/path'},{SIBYL_CLAUDE_SETTINGS:file});
+  assert.equal(merged.ANTHROPIC_BASE_URL,'http://proxy');
+  assert.equal(merged.ANTHROPIC_AUTH_TOKEN,'token');
+  assert.equal(merged.PATH,'/shell/path');
+  assert.equal('BAD_KEY' in merged,false);
+  assert.deepEqual(await agentEnv('codex',{A:'1'},{SIBYL_CLAUDE_SETTINGS:file}),{A:'1'});
+  assert.deepEqual(await agentEnv('claude',{SIBYL_CLAUDE_SETTINGS:join(dir,'missing.json')}),{SIBYL_CLAUDE_SETTINGS:join(dir,'missing.json')});
+});
+
 test('an explicit Node script need not have POSIX execute permission',async t=>{
   const {resolveExecutable}=await runtime(),dir=await fixture(t),entry=join(dir,'entry.mjs');
   await writeFile(entry,'console.log("entry")',{mode:0o600});
