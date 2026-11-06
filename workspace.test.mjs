@@ -116,23 +116,23 @@ test('explicit project ID renames the same canonical path and persists on reopen
 });
 
 test('consultation threads persist and unfinished workers become interrupted after restart', async t => {
-  const {dir,w}=await fixture(t);
+  const {w,open}=await fixture(t);
   const record={id:'consult-one',threadId:'thread-one',sourceSessionId:'source',sourceProjectId:'source-project',targetTool:'claude',targetProjectId:'target-project',targetProjectName:'Target',question:'verify parser',status:'running',round:2,startedAt:new Date().toISOString(),lastProgressAt:new Date().toISOString(),progressEvents:1,outputBytes:12};
   assert.equal(w.saveConsultation(record).id,'consult-one');
   assert.equal(w.listConsultations().length,1);
   w.close();
-  const {openWorkspace}=await import('./workspace.mjs');const reopened=await openWorkspace(dir);t.after(()=>reopened.close());
+  const reopened=await open();
   const [stored]=reopened.listConsultations();
   assert.equal(stored.status,'interrupted');assert.match(stored.error,/后台已重启/);assert.equal(stored.round,2);
 });
 
 test('attention dismissals persist and reject unsafe keys', async t => {
-  const {dir,w}=await fixture(t);
+  const {w,open}=await fixture(t);
   const key='consult:c-1:2026-11-03T10:00:00.000Z';
   assert.deepEqual(w.dismissAttention(key),[key]);
   assert.deepEqual(w.dismissAttention(key),[key]);
   assert.throws(()=>w.dismissAttention('pair:secret'));
   w.close();
-  const {openWorkspace}=await import('./workspace.mjs');const reopened=await openWorkspace(dir);t.after(()=>reopened.close());
+  const reopened=await open();
   assert.deepEqual(reopened.snapshot().settings.dismissedAttention,[key]);
 });

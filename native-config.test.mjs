@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
-import {join} from 'node:path';
+import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 
 test('native connector configuration preserves unrelated MCP settings and adds no model credentials',async()=>{
@@ -11,7 +11,7 @@ test('native connector configuration preserves unrelated MCP settings and adds n
   await writeFile(join(project,'.mcp.json'),JSON.stringify({mcpServers:{existing:{command:'existing'}},extra:true}));
   const a=await mod.configureNativeTool({project,tool:'claude',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'});
   const config=JSON.parse(await readFile(a.configPath,'utf8'));assert.equal(config.extra,true);assert.equal(config.mcpServers.existing.command,'existing');
-  assert.deepEqual(config.mcpServers['ai-bridge'].args,['/app/native-mcp.mjs','--dir','/private/bridge-data','--tool','claude']);
+  assert.deepEqual(config.mcpServers['ai-bridge'].args,['/app/native-mcp.mjs','--dir',resolve('/private/bridge-data'),'--tool','claude']);
   const b=await mod.configureNativeTool({project,tool:'cursor',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'});
   assert.equal(b.configPath,join(project,'.cursor','mcp.json'));
   assert.ok(!JSON.stringify(config).includes('token'));assert.match(a.instructions,/原会话/);
@@ -35,7 +35,7 @@ test('Codex configuration adds a user-level MCP server with narrow auto approval
   assert.match(text,/default_tools_approval_mode = "approve"/);
   assert.match(text,/tool_timeout_sec = 120/);
   assert.match(text,/--tool", "codex"/);
-  assert.match(text,/"\/private\/bridge-data"/);
+  assert.ok(text.includes(JSON.stringify(resolve('/private/bridge-data'))));
   assert.match(text,/\[model_providers\.custom\]/);
   assert.equal((text.match(/\[mcp_servers\.ai-bridge\]/g)||[]).length,1);
   assert.match(await readFile(configPath+'.ai-bridge-backup','utf8'),/model = "existing"/);

@@ -22,7 +22,7 @@ async function fixture({limits, runner, connectionId = 'local', remote, credenti
   };
   const run = signal => runChannel({id:conversation.id, task:'修 bug', store, runner:wrapped, message, output, remote, credential, agents:{codex:'test', claude:'test'}, signal, op:{}, register:r => {control = r;}});
   message(conversation.id, {side:'human', text:'修 bug'});
-  return {dir, store, project, session, conversation, messages, events, calls, run, control:() => control, close:() => rm(dir, {recursive:true, force:true})};
+  return {dir, store, project, session, conversation, messages, events, calls, run, control:() => control, close:async() => {try {store.close();} catch {} await rm(dir, {recursive:true, force:true});}};
 }
 
 const timeout = ms => new Promise((_, reject) => setTimeout(() => reject(Error('timeout ' + ms)), ms).unref?.());
