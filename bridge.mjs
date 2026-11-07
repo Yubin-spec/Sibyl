@@ -212,7 +212,7 @@ export async function agentRunner(agent,prompt,session,signal,project,options={}
   if(agent==='claude') return claudeRunner(prompt,session,signal,project,options);
   if(agent==='codex') return codexRunner(prompt,session,signal,project,options);
   if(agent!=='cursor') throw Error('Unknown agent');
-  const args=['-p','--mode','ask','--output-format','json'];
+  const args=['-p','--mode','ask','--output-format','json','--trust'];
   if(session) args.push('--resume',session);
   // Cursor positional input is passed as an argv item, never through a shell.
   args.push(policy+'\n'+prompt);

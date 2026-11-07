@@ -64,6 +64,25 @@ test('child execution accepts stdin and cancels a running process',async()=>{
   await assert.rejects(runProcess(process.execPath,['-e','setInterval(()=>{},1000)'],{timeout:20}),/timed out/);
 });
 
+test('Cursor headless runner trusts the selected workspace and resumes its session',async()=>{
+  const {agentRunner}=await import('./bridge.mjs');
+  const dir=await mkdtemp(join(tmpdir(),'bridge-cursor-'));
+  try {
+    const executable=join(dir,'cursor-agent.mjs');
+    await writeFile(executable,`
+const args=process.argv.slice(2);
+if(!args.includes('--trust')) process.exit(7);
+const resume=args.indexOf('--resume')>=0?args[args.indexOf('--resume')+1]:null;
+console.log(JSON.stringify({session_id:'cursor-session',result:resume?'resumed':'first'}));
+`);
+    const options={executables:{cursor:executable}};
+    assert.equal((await agentRunner('cursor','first',null,null,dir,options)).result,'first');
+    assert.equal((await agentRunner('cursor','next','cursor-session',null,dir,options)).result,'resumed');
+  } finally {
+    await rm(dir,{recursive:true,force:true});
+  }
+});
+
 test('coordinator automatically relays Claude reply back into the same Codex session',async()=>{
   const {discuss} = await import('./bridge.mjs');
   const codexInputs=[], claudeInputs=[];

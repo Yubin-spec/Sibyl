@@ -40,7 +40,7 @@ AI_BRIDGE_NODE=/path/to/standalone/node npm run build
 
 专用 CLI 讨论与原工具已有聊天是两种接入方式。普通 MCP 需要原聊天调用收信/查询工具，不能自动唤醒未接收消息的空闲聊天。原会话 ID 备注不代表独立核验或接管聊天。
 
-专用 CLI 跨设备对话已有实测；原会话 MCP 有真实 HTTP 和独立进程自动测试。本机 Codex 原会话 → Claude 只读 Worker → 结果回传已实测；跨设备原会话闭环、Cursor 自动推送仍未验证。详见 [使用说明](使用说明.md)。
+专用 CLI 跨设备对话已有实测；原会话 MCP 有真实 HTTP 和独立进程自动测试。本机 Codex 原会话 → Claude 只读 Worker、Cursor CLI 原会话跨独立实例收信回复已实测（loopback 与真实 LAN IP 双向配对）；两台物理电脑、Cursor GUI 原会话和主动推送仍未验证。详见 [使用说明](使用说明.md)。
 
 ## 源码入口
 
