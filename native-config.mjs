@@ -8,7 +8,7 @@ const backupOnce=async path=>{await copyFile(path,path+'.ai-bridge-backup',const
 const writeAtomic=async(path,data)=>{const temp=path+'.'+randomUUID()+'.tmp';try{await writeFile(temp,data,{mode:0o600,flag:'wx'});await rename(temp,path);}finally{await rm(temp,{force:true});}};
 const instructions={
  claude:'配置已写入。请在 Claude Code 原会话里用 /mcp 检查或重连 ai-bridge；若当前版本不能动态加载，续接原会话后再检查。然后让该会话调用 bridge_open_session 登记，并用 bridge_receive 接收问题。跨工具目标已在配置 MCP 时一并保存；发现另一个 AI 工具负责的模块需要核对时，调用 bridge_consult 只传工具名，它会按绑定启动只读托管咨询，未绑定才使用当前项目。收到原会话问题后用 bridge_reply 回答，询问方用 bridge_ask/bridge_result 或 bridge_consult/bridge_consult_result 继续任务。',
- cursor:'配置已写入。请在 Cursor 的 MCP 设置启用 ai-bridge，回到原会话确认工具可见；必要时重新加载窗口并保留原聊天。让该会话调用 bridge_open_session 登记，再用 bridge_receive 接收并用 bridge_reply 回答。跨工具目标已在配置 MCP 时一并保存；跨工具核对时 bridge_consult 只传工具名。',
+ cursor:'配置已写入。请在 Cursor 的 MCP 设置启用 ai-bridge，回到原会话确认工具可见；必要时重新加载窗口并保留原聊天。如果使用 Cursor CLI，先在项目目录执行 cursor-agent mcp enable ai-bridge；无界面运行还要按 Cursor 的审批策略允许 ai-bridge 工具调用。让该会话调用 bridge_open_session 登记，再用 bridge_receive 接收并用 bridge_reply 回答。跨工具目标已在配置 MCP 时一并保存；跨工具核对时 bridge_consult 只传工具名。',
  codex:'配置已写入。Codex 重新打开会话后确认 ai-bridge MCP 可见；该服务已设置 default_tools_approval_mode="approve"，只自动批准 ai-bridge 的工具调用，不改 Codex 其他审批设置。让会话调用 bridge_open_session 登记，再用 bridge_receive/bridge_reply 收发；跨工具核对时 bridge_consult 只传工具名，目标项目由保存的绑定决定。'
 };
 
