@@ -1,14 +1,15 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdir, chmod } from 'node:fs/promises';
 import { realpathSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
+import { canonicalProjectPath, projectKey } from './project-path.mjs';
 
 const tools = ['claude', 'codex', 'cursor', 'workbuddy'];
 const statuses = ['idle', 'running', 'completed', 'failed', 'cancelled', 'archived'];
 const limitKeys = {maxMessages:[1,200], maxTurnsPerAgent:[1,50], maxDurationMs:[1000,86400000], idleTimeoutMs:[1000,86400000], duplicateLimit:[2,10]};
-const defaults = {page:'conversations', selectedProjectId:'', closeToTray:true, autoStartHost:false, networkPort:47831};
+const defaults = {page:'conversations', selectedProjectId:'', closeToTray:true, autoStartHost:false, autoBindProjects:true, networkPort:47831};
 function text(value, field, empty = false) {
   if (typeof value !== 'string' || (!empty && !value.trim())) throw new Error(`Invalid ${field}`);
   return value;
@@ -100,7 +101,7 @@ export async function openWorkspace(dir) {
       keys(patch,Object.keys(defaults));const record=meta('settings');
       for(const [key,value] of Object.entries(patch)) {
         if(key==='networkPort')integer(value,1,65535,key);
-        else if(key==='closeToTray'||key==='autoStartHost')boolean(value,key);
+        else if(key==='closeToTray'||key==='autoStartHost'||key==='autoBindProjects')boolean(value,key);
         else text(value,key,key==='selectedProjectId');
         record[key]=value;
       }
@@ -124,6 +125,15 @@ export async function openWorkspace(dir) {
       db.prepare('INSERT INTO projects VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,data=excluded.data').run(id,path,JSON.stringify(record));return record;
     });},
     deleteProject(id) {return transaction(()=>{get('projects',id);db.prepare('DELETE FROM projects WHERE id=?').run(id);putMeta('bindings',meta('bindings').filter(binding=>binding.sourceProjectId!==id&&binding.targetProjectId!==id));});},
+    ensureProjectByPath(input) {return transaction(()=>{
+      const path=canonicalProjectPath(text(input?.path??input,'path'));
+      const key=projectKey(path);
+      const existing=list('projects').find(project=>projectKey(project.path)===key);
+      if(existing)return existing;
+      const record={id:randomUUID(),name:basename(path)||'Project',path,createdAt:now()};
+      db.prepare('INSERT INTO projects VALUES (?,?,?)').run(record.id,path,JSON.stringify(record));
+      return record;
+    });},
     saveBinding(input) {return transaction(()=>{
       keys(input,['sourceProjectId','targetTool','targetProjectId']);
       const record={sourceProjectId:text(input.sourceProjectId,'sourceProjectId'),targetTool:oneOf(input.targetTool,tools,'targetTool'),targetProjectId:text(input.targetProjectId,'targetProjectId')};

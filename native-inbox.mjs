@@ -1,7 +1,8 @@
 import http from 'node:http';
 import {mkdir,readFile,writeFile,rename,rm,open} from 'node:fs/promises';
-import {join} from 'node:path';
+import {join,basename} from 'node:path';
 import {randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
+import {projectKey} from './project-path.mjs';
 
 const validId=v=>typeof v==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(v);
 const text=(v,max)=>typeof v==='string'&&v.trim()&&v.length<=max;
@@ -29,7 +30,7 @@ export async function openNativeInbox(options){
   const release=async()=>{const owner=JSON.parse(await readFile(lock,'utf8').catch(()=>'{}'));if(owner.nonce===nonce)await rm(lock,{force:true});};
   try{return await createNativeInbox({...options,release});}catch(e){await release();throw e;}
 }
-async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consult,consultResult,consultStop}){
+async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consult,consultResult,consultStop,resolveProject,autoBind}){
   await mkdir(dir,{recursive:true,mode:0o700});
   const file=join(dir,'native-questions.json'),runtimeFile=join(dir,'native-runtime.json');
   let questions=[];try{questions=JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
@@ -39,8 +40,9 @@ async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consu
   const save=()=>{const data=JSON.stringify(questions);queue=queue.catch(()=>{}).then(async()=>{await writeFile(file+'.tmp',data,{mode:0o600});await rename(file+'.tmp',file);});return queue;};
   const changed=()=>{for(const wake of [...waiters])wake();try{Promise.resolve(onChange()).catch(()=>{});}catch{}};
   const live=s=>s&&now()-s.touched<90000;
-  const publicSession=s=>({id:s.id,title:s.title,tool:s.tool,projectId:s.projectId,nativeSessionId:s.nativeSessionId,binding:'mcp-tool',status:live(s)?'available':'offline'});
-  const expire=()=>{let dirty=false;for(const [id,s] of sessions)if(!live(s)){sessions.delete(id);for(const q of questions)if(q.targetSessionId===id&&['queued','delivered'].includes(q.status))q.status='recipient-offline';dirty=true;}if(dirty){void save().then(changed).catch(()=>{});}};
+  const alive=pid=>{if(!Number.isInteger(pid)||pid<1)return true;try{process.kill(pid,0);return true;}catch(e){return e.code==='EPERM';}};
+  const publicSession=s=>({id:s.id,title:s.title,tool:s.tool,projectId:s.projectId,nativeSessionId:s.nativeSessionId,binding:'mcp-tool',auto:!!s.auto,lastActiveAt:new Date(s.touched).toISOString(),status:live(s)&&alive(s.pid)?'available':'offline'});
+  const expire=()=>{let dirty=false;for(const [id,s] of sessions)if(!live(s)||!alive(s.pid)){sessions.delete(id);for(const q of questions)if(q.targetSessionId===id&&['queued','delivered'].includes(q.status))q.status='recipient-offline';dirty=true;}if(dirty){void save().then(changed).catch(()=>{});}};
   const catalog=()=>{expire();return [...sessions.values()].map(publicSession);};
   const own=body=>{const s=sessions.get(body?.id);if(!live(s)||!equal(s.lease,body.lease))throw Error('Session unavailable or invalid lease');s.touched=now();return s;};
   const publicQuestion=q=>{const {peerId,...value}=q;return value;};
@@ -66,15 +68,35 @@ async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consu
       const body=JSON.parse(raw);
       if(req.url==='/register'){
         expire();
-        if(!tools.has(body.tool)||!text(body.title,200)||body.projectId!==undefined&&!validId(body.projectId)||body.projectPath!==undefined&&!text(body.projectPath,1024)||body.nativeSessionId!==undefined&&!text(body.nativeSessionId,200))throw Error('Invalid session registration');
+        if(!tools.has(body.tool)||!text(body.title,200)||body.projectId!==undefined&&!validId(body.projectId)||body.projectPath!==undefined&&!text(body.projectPath,1024)||body.nativeSessionId!==undefined&&!text(body.nativeSessionId,200)||body.pid!==undefined&&(!Number.isInteger(body.pid)||body.pid<1||body.pid>2147483647)||body.auto!==undefined&&typeof body.auto!=='boolean')throw Error('Invalid session registration');
         if(sessions.size>=100)throw Error('Too many native sessions');
-        const s={id:randomUUID(),lease:randomBytes(32).toString('hex'),title:body.title,tool:body.tool,projectId:body.projectId,projectPath:body.projectPath,nativeSessionId:body.nativeSessionId,touched:now()};
+        const s={id:randomUUID(),lease:randomBytes(32).toString('hex'),title:body.title,tool:body.tool,projectId:body.projectId,projectPath:body.projectPath,projectKey:body.projectPath===undefined?null:projectKey(body.projectPath),nativeSessionId:body.nativeSessionId,pid:body.pid,auto:body.auto===true,touched:now()};
+        if(s.projectKey&&typeof resolveProject==='function'){try{const project=await resolveProject(s.projectPath);if(project?.id)s.projectId=project.id;}catch{}}
         sessions.set(s.id,s);changed();return send(200,{...publicSession(s),lease:s.lease});
       }
-      if(req.url==='/sessions')return send(200,{sessions:catalog()});
+      if(req.url==='/sessions'){
+        const scoped=body&&body.projectPath!==undefined,key=scoped?projectKey(body.projectPath):null;
+        if(scoped&&!key)throw Error('Project path is not trusted');
+        expire();
+        const list=[...sessions.values()].filter(item=>!scoped||item.projectKey===key).map(publicSession);
+        return send(200,{sessions:list,scope:scoped?'project':'all'});
+      }
       const s=own(body);
       // Local callers authenticate their session lease; never accept a self-reported source.
-      if(req.url==='/ask')return send(202,await request({id:'local:'+s.id},{id:body.questionId,targetSessionId:body.targetSessionId,text:body.text,source:{id:s.id,title:s.title,tool:s.tool}}));
+      if(req.url==='/ask'){
+        let targetSessionId=body.targetSessionId;
+        if(targetSessionId===undefined){
+          if(typeof autoBind==='function'&&autoBind()===false)throw Error('Automatic project routing is off; pass targetSessionId');
+          expire();
+          if(!s.projectKey)throw Error('This MCP process is not bound to a trusted project; pass targetSessionId');
+          const peers=[...sessions.values()].filter(item=>item.id!==s.id&&item.tool!==s.tool&&item.projectKey===s.projectKey);
+          peers.sort((a,b)=>b.touched-a.touched);
+          if(!peers.length)throw Error('No other AI tool is live in this project'+(s.projectPath?' ('+basename(s.projectPath)+')':'')+'; open the peer original chat first or pass targetSessionId');
+          if(peers.length>1)return send(200,{status:'ambiguous',projectId:s.projectId??null,candidates:peers.map(item=>({id:item.id,title:item.title,tool:item.tool,projectId:item.projectId??null,lastActiveAt:new Date(item.touched).toISOString()})),notice:'More than one peer is live in this project. Choose one and call bridge_ask again with its targetSessionId.'});
+          targetSessionId=peers[0].id;
+        }
+        return send(202,await request({id:'local:'+s.id},{id:body.questionId,targetSessionId,text:body.text,source:{id:s.id,title:s.title,tool:s.tool}}));
+      }
       if(req.url==='/result')return send(200,await result({id:'local:'+s.id},body.questionId));
       if(req.url==='/touch')return send(200,{ok:true});
       if(req.url==='/close'){

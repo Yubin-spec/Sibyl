@@ -25,7 +25,7 @@ test('same-computer original chats ask both ways, recover results and reject for
   const a=await codex.tool('bridge_open_session',{title:'Codex original task'});
   const b=await claude.tool('bridge_open_session',{title:'Claude original task'});
   assert.ok((await codex.tool('bridge_list_peers')).peers.some(p=>p.id==='local'));
-  assert.deepEqual((await codex.tool('bridge_list_sessions',{connectionId:'local'})).sessions.map(s=>s.id).sort(),[a.id,b.id].sort());
+  assert.deepEqual((await codex.tool('bridge_list_sessions',{connectionId:'local'})).sessions.filter(s=>!s.auto).map(s=>s.id).sort(),[a.id,b.id].sort());
   const ask=codex.tool('bridge_ask',{sessionId:a.id,connectionId:'local',targetSessionId:b.id,text:'Which field?',waitMs:3000});
   ask.catch(()=>{});
   const {messages:[q]}=await claude.tool('bridge_receive',{sessionId:b.id,waitMs:3000});

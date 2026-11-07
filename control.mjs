@@ -20,7 +20,7 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const version=JSON.parse(await readFile(new URL('./package.json',import.meta.url),'utf8')).version;
 export async function createControl({dir=defaultDataDir(),onShutdown,detect=detectAgents,runner=(prompt,session,signal,project,agent,options)=>agentRunner(agent,prompt,session,signal,project,options),healthInterval=15000,consultLimits={}}={}) {
  await mkdir(join(dir,'connections'),{recursive:true,mode:0o700});
- let notifyNative=()=>{},consultStart,consultResult,consultStop;const nativeInbox=await openNativeInbox({dir,onChange:()=>notifyNative(),consult:input=>consultStart(input),consultResult:input=>consultResult(input),consultStop:input=>consultStop(input)});let store;try{store=await openWorkspace(dir);}catch(e){await nativeInbox.close();throw e;}
+ let notifyNative=()=>{},consultStart,consultResult,consultStop;const nativeInbox=await openNativeInbox({dir,onChange:()=>notifyNative(),consult:input=>consultStart(input),consultResult:input=>consultResult(input),consultStop:input=>consultStop(input),resolveProject:path=>{if(!store||store.snapshot().settings.autoBindProjects===false)return null;return store.ensureProjectByPath(path);},autoBind:()=>store?.snapshot().settings.autoBindProjects!==false});let store;try{store=await openWorkspace(dir);}catch(e){await nativeInbox.close();throw e;}
  const csrf=randomBytes(32).toString('hex'),connections=new Map(),requests=new Map(),streams=new Set(),operations=[],incoming=new Map(),consultJobs=new Map(),limits=normalizeConsultLimits(consultLimits);
  for(const record of store.listConsultations())consultJobs.set(record.id,record);
  let agents={},toolsLoading=true,host=null,revision=0,closed=false,saveQueue=Promise.resolve();
