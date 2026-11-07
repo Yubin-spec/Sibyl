@@ -1,15 +1,15 @@
 {
-  "name": "ai-bridge",
+  "name": "agents-calling",
   "version": "0.5.0",
   "private": true,
-  "description": "macOS desktop bridge for collaboration between AI coding tools",
+  "description": "Agents Calling: macOS desktop bridge for collaboration between AI coding tools",
   "type": "module",
   "engines": {
     "node": ">=26.0.0"
   },
   "scripts": {
-    "start": "node control.mjs",
-    "test": "node --test *.test.mjs",
-    "build": "zsh build-app.sh 'dist/AI Bridge.app'"
+    "start": "node src/app/control.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "build": "zsh macos/build-app.sh 'dist/Agents Calling.app'"
   }
 }
