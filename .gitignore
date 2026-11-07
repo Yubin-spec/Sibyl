@@ -16,6 +16,12 @@
 /workspace.sqlite*
 /agents-cache.json
 /incoming-map.json
+/browser-runtime.json
+/.codex/config.toml
+/.mcp.json
+*.ai-bridge-backup
+/runtime/
+/verification/
 /discussion-*.jsonl
 *.log
 .env

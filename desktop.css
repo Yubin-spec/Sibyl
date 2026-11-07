@@ -2,7 +2,7 @@
 @media (prefers-color-scheme:dark){:root{--bg:#000;--elevated:#1c1c1e;--sidebar:rgba(28,28,30,.86);--fill:rgba(118,118,128,.16);--fill-strong:rgba(118,118,128,.24);--ink:#f5f5f7;--muted:#a1a1a6;--line:rgba(255,255,255,.12);--blue:#0a84ff;--blue-strong:#409cff;--blue-soft:rgba(10,132,255,.22);--shadow:none;--notice-shadow:0 12px 40px rgba(0,0,0,.5)}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;min-width:850px;-webkit-font-smoothing:antialiased}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;min-width:0;-webkit-font-smoothing:antialiased}
 ::selection{background:var(--blue-soft)}
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer;border:0;border-radius:10px;padding:7px 14px;background:var(--fill);white-space:nowrap;font-weight:520;transition:background .15s,transform .06s}
@@ -116,3 +116,36 @@ form>.primary,form>button{margin-top:16px}
 .consult-result{white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--fill);border-radius:10px;padding:12px;margin:10px 0 0}
 details summary{cursor:pointer;color:var(--blue);font-size:12px;font-weight:550}
 @media(max-width:900px){.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:850px){
+ .columns{grid-template-columns:minmax(0,1fr)}
+ .row{flex-wrap:wrap}
+ input,select,textarea{min-width:0;max-width:100%}
+ .card,.content,.stack{min-width:0}
+ button{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+ .workspace{grid-template-columns:minmax(0,1fr);height:auto}
+ .topics{border-right:0;border-bottom:1px solid var(--line);max-height:380px}
+ .topic-list{min-height:80px}
+ .conversation{min-height:70vh}
+ .conversation-head{flex-wrap:wrap}
+ .transcript{min-height:200px;max-height:60vh}
+ .message{max-width:100%}
+}
+@media(max-width:760px){
+ .sidebar{position:static;inset:auto;width:auto;padding:14px 16px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;border-right:0;border-bottom:1px solid var(--line)}
+ .brand{min-width:0;padding:0;font-size:16px;gap:7px}
+ .mark{flex-shrink:0}
+ .tagline{display:none}
+ nav{grid-column:1/-1;grid-template-columns:repeat(5,minmax(0,1fr))}
+ nav button{justify-content:center;align-items:center;gap:4px;min-width:0;padding:9px 4px;font-size:12px}
+ .sidebar-bottom{grid-column:2;grid-row:1;margin-top:0;padding:0;gap:1px;text-align:right;font-size:11px}
+ .sidebar-bottom>small:last-child{display:none}
+ main{margin-left:0;min-height:0}
+ .content{width:100%;padding:20px 16px 32px}
+ .card{padding:16px}
+ .section-head{flex-wrap:wrap}
+ .row>input{flex-basis:200px}
+ .row>small{flex-basis:100%}
+ .native-instructions,.diagnostic-output{min-width:0;max-width:100%}
+ dialog{width:calc(100% - 32px);max-width:570px;padding:20px}
+ #notice{left:12px;right:12px;top:12px;overflow-wrap:anywhere}
+}

@@ -1,6 +1,9 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const token = document.querySelector('meta[name="bridge-session"]').content;
+const nativeApp = !!window.webkit?.messageHandlers?.bridge;
+if(nativeApp)$('runtimeHelp').textContent='窗口与退出行为由 macOS 应用管理。更改端口将在下次启动接收服务时使用。';
+else{$('closeToTray').disabled=true;$('runtimeHelp').textContent='浏览器版关闭页面后，后台仍会运行；请用停止脚本结束服务。更改端口将在下次启动接收服务时使用。';}
 const names = {codex:'Codex',claude:'Claude Code',cursor:'Cursor',workbuddy:'WorkBuddy'};
 const labels = {running:'正在处理',processing:'正在处理',queued:'排队等待工具',delivered:'已送达桥接，等待工具处理',completed:'回复已返回',failed:'执行失败',cancelled:'已暂停',stopped:'已暂停',stalled:'无进展已停止',timeout:'超时已停止',interrupted:'后台重启已中断',idle:'等待人工指令','waiting-inbox':'等待目标原生会话提取',archived:'已归档',online:'在线',offline:'离线',unknown:'状态未知',pending:'等待确认'};
 let state = {projects:[],sessions:[],conversations:[],connections:[],operations:[],bindings:[],consultations:[],attention:[],consultLimits:{},agents:{}};
@@ -107,7 +110,7 @@ function handleEvent(event){if(event.type==='state')applyState(event.state);else
 async function consumeEvents(response){if(!response.ok||!response.body)throw Error('事件连接失败（'+response.status+'）');const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';for(;;){const {value,done}=await reader.read();if(done)throw Error('事件连接已断开');buffer+=decoder.decode(value,{stream:true});let boundary;while((boundary=/\r?\n\r?\n/.exec(buffer))){const i=boundary.index,block=buffer.slice(0,i);buffer=buffer.slice(i+boundary[0].length);const data=block.split(/\r?\n/).filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');if(data){try{handleEvent(JSON.parse(data));}catch(e){notice('事件处理失败：'+e.message);}}}}}
 async function startEvents(){try{const r=await fetch('/api/events',{headers:{'x-bridge-ui':token}});if(!r.ok)throw Error('事件连接失败（'+r.status+'）');$('streamStatus').textContent='后台已连接 · 实时更新';reconnectDelay=800;await consumeEvents(r);}catch(e){$('streamStatus').textContent='后台连接中断 · 正在重连';setTimeout(async()=>{try{applyState(await api('status'));if(selected)await loadMessages();}catch(error){notice('后台不可达：'+error.message);}startEvents();},reconnectDelay);reconnectDelay=Math.min(reconnectDelay*2,15000);}}
 api('status').then(applyState).catch(e=>notice('无法读取后台状态：'+e.message));startEvents();
-function renderUpdate(info){if(!info)return;$('currentVersion').textContent=info.current||$('currentVersion').textContent;if(info.available){$('updateStatus').textContent='发现新版本 '+info.latest+(info.installer?'，可直接下载安装包。':'，但发布中暂无 DMG 安装包。');$('downloadUpdate').hidden=!info.installer;}else{$('updateStatus').textContent=info.latest?'已是最新版本 '+info.latest+'。':'暂未发布安装包。';$('downloadUpdate').hidden=true;}}
+function renderUpdate(info){if(!info)return;$('currentVersion').textContent=info.current||$('currentVersion').textContent;if(info.available){$('updateStatus').textContent='发现新版本 '+info.latest+(info.installer?(nativeApp?'，可直接下载安装包。':'。发布页安装包适用于 macOS；浏览器版请继续使用本机启动脚本。'):'，但发布中暂无 macOS 安装包。');$('downloadUpdate').hidden=!info.installer||!nativeApp;}else{$('updateStatus').textContent=info.latest?'已是最新版本 '+info.latest+'。':'暂未发布安装包。';$('downloadUpdate').hidden=true;}}
 $('checkUpdate').onclick=()=>action($('checkUpdate'),async()=>{const info=await api('update');renderUpdate(info);return info;});
 $('downloadUpdate').onclick=()=>action($('downloadUpdate'),()=>api('update/download',{}),'安装包已下载并打开，拖入“应用程序”即可完成升级。');
 api('version').then(value=>{$('currentVersion').textContent=value.version||'—';}).catch(()=>{});

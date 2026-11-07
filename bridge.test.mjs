@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chmod, mkdtemp, rm, writeFile} from 'node:fs/promises';
+import {mkdtemp, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import http from 'node:http';
@@ -66,21 +66,19 @@ test('child execution accepts stdin and cancels a running process',async()=>{
 
 test('Cursor headless runner trusts the selected workspace and resumes its session',async()=>{
   const {agentRunner}=await import('./bridge.mjs');
-  const dir=await mkdtemp(join(tmpdir(),'bridge-cursor-')), oldPath=process.env.PATH;
+  const dir=await mkdtemp(join(tmpdir(),'bridge-cursor-'));
   try {
-    const executable=join(dir,'cursor-agent');
-    await writeFile(executable,`#!/usr/bin/env node
+    const executable=join(dir,'cursor-agent.mjs');
+    await writeFile(executable,`
 const args=process.argv.slice(2);
 if(!args.includes('--trust')) process.exit(7);
 const resume=args.indexOf('--resume')>=0?args[args.indexOf('--resume')+1]:null;
 console.log(JSON.stringify({session_id:'cursor-session',result:resume?'resumed':'first'}));
 `);
-    await chmod(executable,0o755);
-    process.env.PATH=dir+':'+oldPath;
-    assert.equal((await agentRunner('cursor','first',null,null,dir)).result,'first');
-    assert.equal((await agentRunner('cursor','next','cursor-session',null,dir)).result,'resumed');
+    const options={executables:{cursor:executable}};
+    assert.equal((await agentRunner('cursor','first',null,null,dir,options)).result,'first');
+    assert.equal((await agentRunner('cursor','next','cursor-session',null,dir,options)).result,'resumed');
   } finally {
-    process.env.PATH=oldPath;
     await rm(dir,{recursive:true,force:true});
   }
 });

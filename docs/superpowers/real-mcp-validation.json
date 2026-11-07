@@ -1,0 +1,138 @@
+{
+  "kind": "real-model-mcp",
+  "startedAt": "2026-11-06T05:22:08.595Z",
+  "scope": "Two dedicated persistent validation conversations; does not attach to an already open desktop chat.",
+  "passed": true,
+  "clients": {
+    "codex": {
+      "nativeSessionId": "01a1af4e-acc9-7900-ab03-dd87b46273ee",
+      "sessionId": "01a1af4e-acc9-7900-ab03-dd87b46273ee",
+      "persistentHost": true,
+      "bridgeSessionId": "a3bfd08f-1723-44cf-af6f-8e7e4f9ea670"
+    },
+    "claude": {
+      "nativeSessionId": "a693d824-d275-4ecb-b8ee-ba51b9d08f2b",
+      "sessionId": "a693d824-d275-4ecb-b8ee-ba51b9d08f2b",
+      "persistentHost": true,
+      "bridgeSessionId": "509ce308-92fa-4d00-83d0-e2c731cd1c9b"
+    }
+  },
+  "turns": [
+    {
+      "client": "claude",
+      "label": "register",
+      "nativeSessionId": "a693d824-d275-4ecb-b8ee-ba51b9d08f2b",
+      "tools": [
+        {
+          "name": "bridge_open_session",
+          "succeeded": true
+        }
+      ]
+    },
+    {
+      "client": "codex",
+      "label": "register",
+      "nativeSessionId": "01a1af4e-acc9-7900-ab03-dd87b46273ee",
+      "tools": [
+        {
+          "name": "bridge_open_session",
+          "succeeded": true
+        }
+      ]
+    },
+    {
+      "client": "codex",
+      "label": "ask Claude",
+      "nativeSessionId": "01a1af4e-acc9-7900-ab03-dd87b46273ee",
+      "tools": [
+        {
+          "name": "bridge_list_sessions",
+          "succeeded": true
+        },
+        {
+          "name": "bridge_ask",
+          "succeeded": true
+        }
+      ]
+    },
+    {
+      "client": "claude",
+      "label": "reply and ask Codex",
+      "nativeSessionId": "a693d824-d275-4ecb-b8ee-ba51b9d08f2b",
+      "tools": [
+        {
+          "name": "bridge_receive",
+          "succeeded": true
+        },
+        {
+          "name": "bridge_reply",
+          "succeeded": true
+        },
+        {
+          "name": "bridge_list_sessions",
+          "succeeded": true
+        },
+        {
+          "name": "bridge_ask",
+          "succeeded": true
+        }
+      ]
+    },
+    {
+      "client": "codex",
+      "label": "result and reply",
+      "nativeSessionId": "01a1af4e-acc9-7900-ab03-dd87b46273ee",
+      "tools": [
+        {
+          "name": "bridge_result",
+          "succeeded": true
+        },
+        {
+          "name": "bridge_receive",
+          "succeeded": true
+        },
+        {
+          "name": "bridge_reply",
+          "succeeded": true
+        }
+      ]
+    },
+    {
+      "client": "claude",
+      "label": "collect result",
+      "nativeSessionId": "a693d824-d275-4ecb-b8ee-ba51b9d08f2b",
+      "tools": [
+        {
+          "name": "bridge_result",
+          "succeeded": true
+        }
+      ]
+    },
+    {
+      "client": "claude",
+      "label": "continue original context",
+      "nativeSessionId": "a693d824-d275-4ecb-b8ee-ba51b9d08f2b",
+      "tools": []
+    },
+    {
+      "client": "codex",
+      "label": "continue original context",
+      "nativeSessionId": "01a1af4e-acc9-7900-ab03-dd87b46273ee",
+      "tools": []
+    }
+  ],
+  "checks": {
+    "actualModelMcpCalls": true,
+    "bidirectionalAnswers": true,
+    "samePersistentHosts": true,
+    "sameNativeSessionIds": true,
+    "originalContextRetained": true,
+    "peerAnswersRetained": true,
+    "noManagedCliSubstitution": true
+  },
+  "syntheticMarkers": {
+    "codex": "CODEX_CONTEXT_bb74970b87344782b85b2737ecdc473e",
+    "claude": "CLAUDE_CONTEXT_e215dc856eef433e81de99b81ec42b47"
+  },
+  "finishedAt": "2026-11-06T05:23:33.730Z"
+}
