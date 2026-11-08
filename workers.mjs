@@ -232,7 +232,6 @@ export function createWorkerService({
     try {
       if (record.tier !== 'consult') {
         const wt = await createWorkerWorktree({projectPath: record.projectPath, workerId: record.id, scope: record.scope});
-        if (record.cancelled) return;
         Object.assign(record, {
           worktreePath: wt.worktreePath,
           branch: wt.branch,
@@ -240,6 +239,7 @@ export function createWorkerService({
           snapshotCommit: wt.snapshotCommit,
           leadDigest: wt.leadDigest
         });
+        if (record.cancelled) return;
       }
       if (record.cancelled) return;
       record.refsBefore = await listRefs(record.projectPath);

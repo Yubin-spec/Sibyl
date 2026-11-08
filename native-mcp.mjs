@@ -4,18 +4,19 @@ import {defaultDataDir} from './runtime.mjs';
 import {randomUUID} from 'node:crypto';
 import {parseArgs} from 'node:util';
 import {createInterface} from 'node:readline';
-import {spawn} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
 import {makeClient} from './bridge.mjs';
 import {canonicalProjectPath} from './project-path.mjs';
 
-const {values}=parseArgs({options:{dir:{type:'string',default:defaultDataDir()},tool:{type:'string',default:'claude'},'spawn-script':{type:'string'},'claude-spawn-script':{type:'string'}},strict:true});
+const {values}=parseArgs({options:{dir:{type:'string',default:defaultDataDir()},tool:{type:'string',default:'claude'}},strict:true});
 const dir=resolve(values.dir),sessions=new Map(),requests=new Map(),active=new Map();
 const projectPath=(()=>{try{return canonicalProjectPath(process.cwd());}catch{return null;}})();
 const projectTitle=projectPath?projectPath.split(/[\\/]/).filter(Boolean).at(-1)||'Project':'Project';
 const registrationProjectPath=projectPath??process.cwd();
 const validId=v=>typeof v==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(v);
 const str={type:'string'},flag={type:'boolean'},wait={type:'integer',minimum:0,maximum:25000,default:25000},consultWait={type:'integer',minimum:0,maximum:25000};
+const paths={type:'array',items:{type:'string',minLength:1,maxLength:1024},minItems:1,maxItems:64};
+const workerId={type:'string',format:'uuid',pattern:'^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$'};
+const workerTimeout={type:'integer',minimum:1000,maximum:600000};
 const definitions=[
  ['bridge_open_session','Register THIS conversation with a distinct handle. Keep its returned session ID in this conversation; do not use another chat’s ID. Every MCP process already registers automatically for its working directory, so this is only needed to set a per-chat title or override the project.',{title:str,projectId:str,nativeSessionId:str},['title']],
  ['bridge_list_peers','List this computer (id local) and computers already paired with AI Bridge. No automatic pairing or model requests.',{},[]],
@@ -27,9 +28,13 @@ const definitions=[
  ['bridge_consult','Automatically start a read-only managed consultation with another local AI tool when a module it owns needs verification. Returns immediately with consultId; continue the current task and use bridge_consult_result later. The saved project binding chooses the target project, so the caller does not know or pass it. This starts an isolated Worker, never wakes or joins the target original chat, and never modifies files.',{sessionId:str,tool:str,text:str,waitMs:consultWait},['tool','text']],
  ['bridge_consult_result','Retrieve a managed consultation result into the SAME asking chat. Does not start another consultation.',{sessionId:str,consultId:str,waitMs:wait},['consultId']],
  ['bridge_consult_stop','Stop only this managed read-only consultation Worker. It does not interrupt the asking chat or any target original chat.',{sessionId:str,consultId:str},['consultId']],
- ['bridge_spawn','Open a new worker chat (Codex app-server by default, or Claude) in this MCP process’s project and optionally run one prompt. Without keepAlive the chat runs one turn and closes; with keepAlive (or no prompt) keep spawnId for bridge_spawn_turn and close it with bridge_spawn_close. The new chat registers itself with AI Bridge. Interactive approvals are impossible: sandbox is read-only or workspace-write only and the approval policy is always never.',{tool:str,prompt:str,sandbox:str,effort:str,timeoutMs:{type:'integer',minimum:1000,maximum:600000},keepAlive:flag},[]],
- ['bridge_spawn_turn','Run one more turn in a live chat started by bridge_spawn. The chat keeps its original Codex context; turns never overlap.',{spawnId:str,prompt:str,timeoutMs:{type:'integer',minimum:1000,maximum:600000}},['spawnId','prompt']],
- ['bridge_spawn_close','Close a chat started by bridge_spawn, releasing its app-server process and its automatic native session.',{spawnId:str},['spawnId']],
+ ['bridge_worker_start','Start a daemon-owned worker in this project. Choose consult for a visible read-only chat, dispatch for one task, or parallel for disjoint scopes. Scope is required except for consult; shared files stay with the lead. Returns workerId immediately; keep it and call bridge_worker_result for the report. Model auto chooses by task kind and risk.',{tool:{...str,enum:['codex','claude']},tier:{...str,enum:['consult','dispatch','parallel']},scope:paths,leadScope:paths,prompt:{...str,minLength:0,maxLength:20000},model:{...str,maxLength:80,default:'auto'},kind:{...str,enum:['review','implement','mechanical','frontier']},risk:{...str,enum:['normal','high'],default:'normal'},effort:{...str,enum:['low','medium','high','ultra']},timeoutMs:workerTimeout},['tool','tier']],
+ ['bridge_worker_turn','Queue a follow-up turn in a running worker and return immediately. Turns cannot overlap; use bridge_worker_result to retrieve lastTurn.',{workerId,prompt:str,timeoutMs:workerTimeout},['workerId','prompt']],
+ ['bridge_worker_result','Read an existing worker result without resubmitting. Wait at most 25 seconds for a running turn; return immediately when lastTurn completes or fails. Reports contain patch paths rather than inline diffs.',{workerId,waitMs:wait},['workerId']],
+ ['bridge_worker_close','Close this worker through the daemon and retain its worktree, branch and report.',{workerId},['workerId']],
+ ['bridge_worker_accept','Record the lead acceptance decision for a finished worker. The lead verifies and integrates the result.',{workerId,accepted:flag,note:{...str,minLength:0,maxLength:2000}},['workerId','accepted']],
+ ['bridge_worker_list','List this session’s workers, or pass all:true to include all daemon worker records.',{all:flag},[]],
+ ['bridge_lease_check','Check paths against worker leases and shared-file rules before editing. Returns allowed, blocked, shared and invalid.',{paths},['paths']],
  ['bridge_close_session','Stop sharing this conversation. Pending questions become unavailable; no CLI fallback.',{sessionId:str},[]]
 ].map(([name,description,properties,required])=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}}));
 const own=id=>{const s=sessions.get(id);if(!s)throw Error('Session does not belong to this MCP connection; register this conversation first');return s;};
@@ -54,63 +59,6 @@ async function peer(id){
  return makeClient(c.url,c.token);
 }
 const pause=(ms,signal)=>new Promise((resolve,reject)=>{const timer=setTimeout(done,ms);function done(){signal?.removeEventListener('abort',abort);resolve();}function abort(){clearTimeout(timer);reject(Error('Cancelled; inspect existing question before retrying'));}if(signal?.aborted)return abort();signal?.addEventListener('abort',abort,{once:true});});
-const spawnScript=values['spawn-script']?resolve(values['spawn-script']):fileURLToPath(new URL('./scripts/spawn-codex-chat.mjs',import.meta.url));
-const claudeSpawnScript=values['claude-spawn-script']?resolve(values['claude-spawn-script']):fileURLToPath(new URL('./scripts/spawn-claude-chat.mjs',import.meta.url));
-const spawns=new Map(),SPAWN_MAX=4,SPAWN_TIMEOUT=180000;
-function spawnSettings(args){
- const tool=args.tool??'codex';
- if(!['codex','claude'].includes(tool))throw Error('tool must be codex or claude');
- const sandbox=args.sandbox??'read-only';
- if(!['read-only','workspace-write'].includes(sandbox))throw Error('sandbox must be read-only or workspace-write');
- const effort=args.effort??'high';
- if(!['low','medium','high','ultra'].includes(effort))throw Error('effort must be low, medium, high or ultra');
- const timeoutMs=args.timeoutMs??SPAWN_TIMEOUT;
- if(!Number.isInteger(timeoutMs)||timeoutMs<1000||timeoutMs>600000)throw Error('timeoutMs must be 1000..600000');
- if(args.keepAlive!==undefined&&typeof args.keepAlive!=='boolean')throw Error('keepAlive must be a boolean');
- return {tool,sandbox,effort,timeoutMs};
-}
-function startSpawn({project,tool,sandbox,effort,timeoutMs}){
- return new Promise((resolveStart,rejectStart)=>{
-  const child=spawn(process.execPath,[tool==='claude'?claudeSpawnScript:spawnScript,'--rpc','--dir',dir,'--project',project,'--sandbox',sandbox,'--effort',effort,'--timeout-ms',String(timeoutMs)],{cwd:project,stdio:['pipe','pipe','pipe'],windowsHide:true});
-  const record={child,threadId:null,sessionId:null,cwd:project,serial:0,turn:null,timer:null,closed:false,stderr:''};
-  let started=false;
-  const finishStart=error=>{if(started)return;started=true;clearTimeout(startupTimer);try{child.kill('SIGKILL');}catch{}rejectStart(error);};
-  const startupTimer=setTimeout(()=>finishStart(Error('Spawned Codex chat startup timed out')),Math.min(timeoutMs,30000));
-  const settleTurn=value=>{if(!record.turn||value.id!==record.turn.id)return;clearTimeout(record.timer);const turn=record.turn;record.turn=null;value.type==='error'?turn.reject(Error(value.error||'Spawned Codex chat failed')):turn.resolve({text:value.text??'',tools:value.tools??[]});};
-  record.send=value=>{if(record.closed)throw Error('Spawned chat is closed');child.stdin.write(JSON.stringify(value)+'\n');};
-  child.stderr.on('data',chunk=>{record.stderr=(record.stderr+chunk.toString()).slice(-2000);});
-  child.stdin.on('error',()=>{});
-  child.on('error',error=>{record.closed=true;if(!started)return finishStart(error);if(record.turn){const turn=record.turn;record.turn=null;clearTimeout(record.timer);turn.reject(error);}});
-  child.once('close',(code,signal)=>{record.closed=true;clearTimeout(startupTimer);if(!started){started=true;rejectStart(Error('Spawned Codex chat exited (code '+code+', signal '+signal+')'+(record.stderr?' '+record.stderr.trim():'')));return;}if(record.threadId)spawns.delete(record.threadId);if(record.turn){const turn=record.turn;record.turn=null;clearTimeout(record.timer);turn.reject(Error('Spawned Codex chat exited (code '+code+', signal '+signal+')'+(record.stderr?' '+record.stderr.trim():'')));}});
-  createInterface({input:child.stdout}).on('line',line=>{
-   let value;try{value=JSON.parse(line);}catch{return;}
-   if(!started&&value.type==='thread'&&value.threadId){
-    if(spawns.size>=SPAWN_MAX)return finishStart(Error('Too many live spawned chats; close one with bridge_spawn_close first'));
-    started=true;clearTimeout(startupTimer);record.threadId=value.threadId;record.sessionId=value.sessionId||value.threadId;spawns.set(record.threadId,record);resolveStart(record);return;
-   }
-   if(!started&&value.type==='error')return finishStart(Error(value.error||'Spawned Codex chat failed'));
-   settleTurn(value);
-  });
- });
-}
-function spawnTurn(record,prompt,timeoutMs){
- if(record.closed)return Promise.reject(Error('Spawned chat is closed'));
- if(record.turn)return Promise.reject(Error('A turn is already running in this spawned chat'));
- const id=++record.serial;
- return new Promise((resolveTurn,reject)=>{
-  record.turn={id,resolve:resolveTurn,reject};
-  record.timer=setTimeout(()=>{if(record.turn?.id===id){record.turn=null;reject(Error('Spawned Codex turn timed out'));}},timeoutMs);
-  try{record.send({id,op:'turn',prompt});}catch(error){clearTimeout(record.timer);record.turn=null;reject(error);}
- });
-}
-async function closeSpawn(record){
- if(!record||record.closed){if(record?.threadId)spawns.delete(record.threadId);return;}
- const exited=new Promise(resolve=>record.child.once('close',resolve));
- try{record.send({id:++record.serial,op:'close'});}catch{}
- const timer=setTimeout(()=>{if(!record.closed){try{record.child.kill('SIGKILL');}catch{}}},5000);
- await Promise.race([exited,new Promise(resolve=>setTimeout(resolve,8000))]);clearTimeout(timer);
- record.closed=true;spawns.delete(record.threadId);
-}
 async function answer(id,ms,signal){
  const r=requests.get(id);if(!r)throw Error('Question does not belong to this MCP connection');
  const call=!r.connectionId||r.connectionId==='local'?null:await peer(r.connectionId),deadline=Date.now()+ms;
@@ -132,10 +80,31 @@ async function consultAnswer(session,id,ms,signal){
   if(Date.now()>=deadline)return {...value,notice:'Still running; keep consultId and call bridge_consult_result; do not resubmit.'};
  }
 }
+async function workerAnswer(session,workerId,ms,signal){
+ const deadline=Date.now()+ms;
+ while(true){
+  const waitMs=Math.max(0,Math.min(25000,deadline-Date.now()));
+  const value=await local('/worker/result',{id:session.id,lease:session.lease,workerId,waitMs},signal);
+  if(!['starting','running'].includes(value.status))return value;
+  if(value.lastTurn?.status!=='running'||Date.now()>=deadline)return {...value,notice:'Still running; keep workerId and call bridge_worker_result; do not resubmit.'};
+ }
+}
 async function tool(name,args,signal){
  const def=definitions.find(t=>t.name===name);if(!def)throw Error('Unknown tool');
  if(!args||typeof args!=='object'||Array.isArray(args)||Object.keys(args).some(k=>!Object.hasOwn(def.inputSchema.properties,k))||def.inputSchema.required.some(k=>args[k]===undefined))throw Error('Invalid tool arguments');
- for(const [k,v] of Object.entries(args))if(def.inputSchema.properties[k].type==='string'&&(typeof v!=='string'||!v.trim()||v.length>20000))throw Error('Invalid '+k);
+ if(name==='bridge_worker_start'){
+  if(!['codex','claude'].includes(args.tool))throw Error('tool must be codex or claude');
+  if(!['consult','dispatch','parallel'].includes(args.tier))throw Error('tier must be consult, dispatch or parallel');
+  if(args.tier!=='consult'&&args.scope===undefined)throw Error('scope is required unless tier is consult');
+ }
+ for(const [k,v] of Object.entries(args)){
+  const schema=def.inputSchema.properties[k];
+  if(schema.type==='string'&&(typeof v!=='string'||schema.minLength!==0&&!v.trim()||v.length>(schema.maxLength??20000)||schema.pattern&&!new RegExp(schema.pattern).test(v)))throw Error('Invalid '+k);
+  if(schema.type==='boolean'&&typeof v!=='boolean')throw Error('Invalid '+k);
+  if(schema.type==='integer'&&(!Number.isInteger(v)||v<schema.minimum||v>schema.maximum))throw Error('Invalid '+k);
+  if(schema.type==='array'&&(!Array.isArray(v)||v.length<1||v.length>64||v.some(item=>typeof item!=='string'||!item.trim()||item.length>1024)))throw Error('Invalid '+k);
+  if(schema.enum&&!schema.enum.includes(v))throw Error('Invalid '+k);
+ }
  if(name==='bridge_open_session'){
   const previous=autoDisabled?null:await ensureSession().catch(()=>null);
   autoDisabled=false;
@@ -155,30 +124,6 @@ async function tool(name,args,signal){
   const listing=await local('/sessions',project===undefined?{}:{projectPath:project},signal);
   return {...listing,project:project??null};
  }
- if(name==='bridge_spawn'){
-  const settings=spawnSettings(args),keepAlive=args.keepAlive===true,prompt=args.prompt?.trim();
-  if(!prompt&&!keepAlive)throw Error('prompt is required unless keepAlive is true');
-  const record=await startSpawn({project:projectPath??resolve(process.cwd()),...settings});
-  const base={spawnId:record.threadId,threadId:record.threadId,sessionId:record.sessionId,cwd:record.cwd,tool:settings.tool,sandbox:settings.sandbox,effort:settings.effort};
-  if(prompt){
-   try{
-    const value=await spawnTurn(record,prompt,settings.timeoutMs);
-    if(!keepAlive){await closeSpawn(record);return {...base,...value,status:'completed',closed:true,notice:'One turn completed and the spawned chat closed. Use keepAlive:true for follow-up turns.'};}
-    return {...base,...value,status:'running',notice:'Keep spawnId for bridge_spawn_turn; close it with bridge_spawn_close.'};
-   }catch(error){await closeSpawn(record);throw error;}
-  }
-  return {...base,status:'running',notice:'Idle chat created. Use bridge_spawn_turn and close it with bridge_spawn_close.'};
- }
- if(name==='bridge_spawn_turn'){
-  const record=spawns.get(args.spawnId);if(!record)throw Error('Unknown or closed spawnId');
-  const timeoutMs=args.timeoutMs??SPAWN_TIMEOUT;if(!Number.isInteger(timeoutMs)||timeoutMs<1000||timeoutMs>600000)throw Error('timeoutMs must be 1000..600000');
-  const value=await spawnTurn(record,args.prompt,timeoutMs);
-  return {spawnId:record.threadId,sessionId:record.sessionId,cwd:record.cwd,status:'running',...value};
- }
- if(name==='bridge_spawn_close'){
-  const record=spawns.get(args.spawnId);if(!record)throw Error('Unknown or closed spawnId');
-  await closeSpawn(record);return {spawnId:args.spawnId,status:'closed'};
- }
  if(name==='bridge_close_session'){
   const session=args.sessionId===undefined?(current&&sessions.has(current.id)?current:null):own(args.sessionId);
   if(!session){autoDisabled=true;return {ok:true};}
@@ -186,6 +131,16 @@ async function tool(name,args,signal){
   sessions.delete(session.id);if(current?.id===session.id){current=null;autoDisabled=true;}if(autoSession?.id===session.id)autoSession=null;return result;
  }
  const session=await useSession(args.sessionId),identity={id:session.id,lease:session.lease};
+ if(name==='bridge_worker_start'){
+  const model=args.model??'auto',kind=args.kind??null,risk=args.risk??'normal';
+  return local('/worker/start',{...identity,...args,model,risk,...(kind===null?{}:{kind})},signal);
+ }
+ if(name==='bridge_worker_turn')return local('/worker/turn',{...identity,...args},signal);
+ if(name==='bridge_worker_result')return workerAnswer(session,args.workerId,duration(args.waitMs),signal);
+ if(name==='bridge_worker_close')return local('/worker/close',{...identity,...args},signal);
+ if(name==='bridge_worker_accept')return local('/worker/accept',{...identity,...args},signal);
+ if(name==='bridge_worker_list')return local('/worker/list',{...identity,...args},signal);
+ if(name==='bridge_lease_check')return local('/lease/check',{...identity,...args},signal);
  if(name==='bridge_receive')return local('/receive',{...identity,waitMs:duration(args.waitMs)},signal);
  if(name==='bridge_reply')return local('/reply',{...identity,questionId:args.questionId,peerId:args.peerId,text:args.text},signal);
  if(name==='bridge_consult'){const started=await local('/consult',{...identity,tool:args.tool,text:args.text},signal);if(args.waitMs===undefined)return {...started,notice:'Consultation started in the background. Keep consultId; do not resubmit. Use bridge_consult_result when you need the answer.'};return consultAnswer(session,started.consultId,duration(args.waitMs),signal);}
@@ -229,5 +184,5 @@ const heartbeat=setInterval(async()=>{for(const s of [...sessions.values()]){try
 const lines=createInterface({input:process.stdin});
 lines.on('line',line=>{if(Buffer.byteLength(line)>100000)return emit({jsonrpc:'2.0',id:null,error:{code:-32600,message:'Message too large'}});try{const m=JSON.parse(line);if(m.jsonrpc!=='2.0'||typeof m.method!=='string')throw Error('Invalid request');void handle(m);}catch{emit({jsonrpc:'2.0',id:null,error:{code:-32700,message:'Invalid JSON-RPC'}});}});
 let stopping=false;
-async function close(){if(stopping)return;stopping=true;clearInterval(heartbeat);for(const c of active.values())c.abort();await (registering??Promise.resolve()).catch(()=>{});await Promise.allSettled([...spawns.values()].map(closeSpawn));await Promise.allSettled([...sessions.values()].map(s=>local('/close',{id:s.id,lease:s.lease})));process.exit(0);}
+async function close(){if(stopping)return;stopping=true;clearInterval(heartbeat);for(const c of active.values())c.abort();await (registering??Promise.resolve()).catch(()=>{});await Promise.allSettled([...sessions.values()].map(s=>local('/close',{id:s.id,lease:s.lease})));process.exit(0);}
 lines.on('close',close);process.once('SIGTERM',close);process.once('SIGINT',close);

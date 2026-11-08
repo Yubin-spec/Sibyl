@@ -1266,7 +1266,6 @@ test('worker records persist and running ones become interrupted after a restart
     }finally{second.close();}
   }finally{await rm(dir,{recursive:true,force:true});}
 });
-```
 
 test('saving many ended workers never evicts a live one',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'workspace-workers-live-'));
