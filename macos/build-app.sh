@@ -11,6 +11,7 @@ for source_file in macos/Desktop.swift Node-LICENSE "${SOURCE_FILES[@]}"; do
   [[ -f "$source_file" ]] || { print -u2 "Missing required resource: $source_file"; exit 1; }
 done
 [[ -d src ]] || { print -u2 "Missing required resource: src"; exit 1; }
+[[ -f macos/AppIcon.icns ]] || { print -u2 "Missing required resource: macos/AppIcon.icns"; exit 1; }
 [[ -x "$NODE_BIN" ]] || { print -u2 "Node executable not found: $NODE_BIN"; exit 1; }
 # A Homebrew runtime may work in place but fail when copied into the App.
 xcrun lipo "$NODE_BIN" -verify_arch arm64 >/dev/null 2>&1 || { print -u2 "Use a standalone macOS arm64 Node.js binary (AI_BRIDGE_NODE or second argument)."; exit 1; }
@@ -24,6 +25,7 @@ VERSION=$("$NODE_BIN" -p "require('./package.json').version")
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 xcrun swiftc macos/Desktop.swift -target arm64-apple-macosx13.5 -framework Cocoa -framework WebKit -O -o "$APP_DIR/Contents/MacOS/Agents Calling"
 cp -L "$NODE_BIN" "$APP_DIR/Contents/Resources/node"
+cp macos/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
 rm -rf "$APP_DIR/Contents/Resources/src"
 cp -R src "$APP_DIR/Contents/Resources/src"
 for source_file in "${SOURCE_FILES[@]}"; do
@@ -38,6 +40,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>local.team.aibridge</string>
 <key>CFBundleName</key><string>Agents Calling</string>
 <key>CFBundleDisplayName</key><string>Agents Calling</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>${VERSION}</string>
 <key>CFBundleVersion</key><string>${VERSION}</string>

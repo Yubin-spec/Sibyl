@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="base" x1="218" y1="168" x2="842" y2="884" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4CB8FF"/>
+      <stop offset="0.42" stop-color="#0878FF"/>
+      <stop offset="1" stop-color="#0046C7"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(350 246) rotate(52) scale(520 440)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.42"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bubbleFront" x1="228" y1="286" x2="534" y2="584" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EAF5FF"/>
+    </linearGradient>
+    <linearGradient id="bubbleBack" x1="486" y1="506" x2="806" y2="772" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.94"/>
+      <stop offset="1" stop-color="#D6ECFF" stop-opacity="0.84"/>
+    </linearGradient>
+    <linearGradient id="arrowFront" x1="300" y1="402" x2="476" y2="402" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0068F5"/>
+      <stop offset="1" stop-color="#27A7FF"/>
+    </linearGradient>
+    <filter id="softShadow" x="150" y="220" width="740" height="640" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="22" stdDeviation="24" flood-color="#002B78" flood-opacity="0.30"/>
+    </filter>
+    <clipPath id="iconMask">
+      <path d="M285 100H739C841.2 100 924 182.8 924 285V739C924 841.2 841.2 924 739 924H285C182.8 924 100 841.2 100 739V285C100 182.8 182.8 100 285 100Z"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#iconMask)">
+    <rect width="1024" height="1024" fill="url(#base)"/>
+    <rect width="1024" height="1024" fill="url(#glow)"/>
+    <ellipse cx="512" cy="986" rx="520" ry="250" fill="#002B8A" opacity="0.18"/>
+    <path d="M100 736C296 664 436 704 590 632C738 562 842 494 924 438V924H100V736Z" fill="#FFFFFF" opacity="0.035"/>
+  </g>
+
+  <path d="M285 100H739C841.2 100 924 182.8 924 285V739C924 841.2 841.2 924 739 924H285C182.8 924 100 841.2 100 739V285C100 182.8 182.8 100 285 100Z" fill="none" stroke="#FFFFFF" stroke-opacity="0.20" stroke-width="3"/>
+
+  <g filter="url(#softShadow)">
+    <path d="M298 278H526C566 278 598 310 598 350V462C598 502 566 534 526 534H390L310 594L326 534H298C258 534 226 502 226 462V350C226 310 258 278 298 278Z" fill="url(#bubbleFront)"/>
+    <rect x="424" y="510" width="366" height="256" rx="70" fill="url(#bubbleBack)"/>
+    <path d="M700 754L744 818L780 754Z" fill="url(#bubbleBack)"/>
+  </g>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M300 407H460" stroke="url(#arrowFront)" stroke-width="36"/>
+    <path d="M430 355L484 407L430 459" stroke="url(#arrowFront)" stroke-width="36"/>
+    <path d="M724 638H564" stroke="#0064DE" stroke-width="36"/>
+    <path d="M594 586L540 638L594 690" stroke="#0064DE" stroke-width="36"/>
+  </g>
+
+</svg>
