@@ -128,6 +128,9 @@ form>.primary,form>button{margin-top:16px}
 
 .native-instructions{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--fill);border:0;border-radius:10px;padding:14px;font:12px/1.8 ui-monospace,SFMono-Regular,Menlo,monospace;max-height:300px;overflow:auto}.native-question{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8;margin:12px 0}.native-question+h3{margin-top:16px}
 
+/* 原会话最近 100 条记录固定高度滚动，避免持续撑高页面。 */
+#nativeQuestions{height:clamp(280px,44vh,520px);align-content:start;grid-auto-rows:max-content;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:14px;border:1px solid var(--line);border-radius:16px;background:var(--fill)}
+
 .diagnostic-output{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--fill);border-radius:10px;padding:10px;margin:10px 0}
 
 .metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}
