@@ -174,7 +174,7 @@ Claude Code 插件包（MCP + Skill + 斜杠命令）与 Codex 侧的 `AGENTS.md
 - `spawn` 写死 Codex：需要泛化到任意工具，并补 Claude 工作方。
 - `consult` 的预算为问答设计（单次总时长 180 秒、120 秒无进展即停、10 分钟 12 次）；三档里的「派个活 / 分头干」不能共用这套数字。
 - `spawn_turn` 只回文本，没有 diff 与文件清单，无法支撑验收。
-- `approval policy = never` 意味着工作方遇到需要确认的命令会直接失败，而不是来问人；跑测试、装依赖会卡在这里。按 §5 的权限姿态处理：不装依赖、复用主仓库 `node_modules`，其余一律变成报告里的阻塞项。
+- `approval policy = never` 意味着工作方遇到需要确认的命令会直接失败，而不是来问人；跑测试、装依赖会卡在这里。**实测（2026-11-08，Codex 0.166.0 / Windows 11）**：Codex 的 Windows 沙箱是 restricted-token 实现，沙箱内创建**任何**子进程都返回 `EPERM`（`node → node`、`node → cmd` 都一样），所以 `node --test` 必然失败；`--test-isolation=none` 只能避免 runner 自身 fork，测试代码内部的 fork 仍会失败。另外沙箱内 PATH 上的 `node` 是 22，不是仓库要求的 26。**因此 Windows 上的 Codex 工作方无法自验**：它只负责改文件并报告"尝试了什么、在哪里被挡住"，**验收由主导方在沙箱外跑测试完成**。取消沙箱（`danger-full-access`）不属于自动授权范围，需要人明确同意。
 
 ## 11. 未决问题
 
