@@ -10,6 +10,7 @@ test('bridge_worker_start dispatches and result returns the git report',async()=
     assert.equal(started.status,'starting');
     assert.deepEqual(started.leadMustWaitFor,['src']);
     const done=await wait(async()=>{const r=await c.tool('bridge_worker_result',{workerId:started.workerId,waitMs:1000});return r.status==='completed'?r:null;});
+    assert.match(done.threadId,/^fake-/);
     assert.deepEqual(done.report.files.modified,['src/a.txt']);
     assert.ok(done.report.patchPath.endsWith(started.workerId+'.patch'));
     assert.ok(!JSON.stringify(done).includes('diff --git'));
@@ -47,7 +48,8 @@ test('bridge_worker_turn returns before the turn finishes',async()=>{
   const c=mcpClient(f.dir,'claude',f.project);
   try{
     const started=await c.tool('bridge_worker_start',{tool:'codex',tier:'parallel',scope:['src']});
-    await wait(async()=>{const r=await c.tool('bridge_worker_result',{workerId:started.workerId,waitMs:100});return r.status==='running'?r:null;});
+    const running=await wait(async()=>{const r=await c.tool('bridge_worker_result',{workerId:started.workerId,waitMs:100});return r.status==='running'?r:null;});
+    assert.match(running.threadId,/^fake-/);
     const before=Date.now();
     const turn=await c.tool('bridge_worker_turn',{workerId:started.workerId,prompt:'work'});
     assert.ok(Date.now()-before<1000,'turn waited for completion');

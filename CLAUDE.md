@@ -6,12 +6,18 @@
 
 标准顺序（每次派活都照做）：
 
-1. 新建 Codex 会话/工作方：
-   - 只读讨论：`bridge_worker_start({tool:"codex", tier:"consult", prompt})`；
-   - 写任务：`bridge_worker_start({tool:"codex", tier:"dispatch"|"parallel", scope, prompt})`。
-2. **紧接着**运行 `powershell -NoProfile -ExecutionPolicy Bypass -File "D:\LXY_workspace\AI Bridge\Sibyl\scripts\focus-codex-thread.ps1" -Match "<任务标题里独有的片段>" -TimeoutSec 25`（用绝对路径，不要依赖当前目录；父目录 `D:\LXY_workspace\AI Bridge` 下没有这个脚本），把 Codex 窗口切到前台、打开该会话并保持可见。脚本会轮询侧栏直到会话出现。
-3. 确认会话已打开后，再发/继续任务 turn（`bridge_worker_turn` 或 `bridge_spawn_turn`）。**不要先等 `bridge_worker_result` 或任务完成**。
-4. 执行期间保持 Codex 窗口可见；结束后再用 `bridge_worker_result` / `bridge_worker_accept` / `bridge_worker_close` 收报告。
+1. 新建 Codex 会话/工作方（**不要带 `prompt`**）：
+   - 只读讨论：`bridge_worker_start({tool:"codex", tier:"consult"})`；
+   - 写任务：`bridge_worker_start({tool:"codex", tier:"dispatch"|"parallel", scope})`。
+2. 轮询 `bridge_worker_result({workerId, waitMs})`，直到返回非空 `threadId`（通常 <1 秒）。
+3. 用深链打开会话（不依赖窗口位置）：
+   `powershell -NoProfile -ExecutionPolicy Bypass -File "D:\LXY_workspace\AI Bridge\Sibyl\scripts\open-codex-thread.ps1" -ThreadId "<threadId>"`
+   脚本默认带 `?hostId=local`；不带这个参数时 Codex 会去查云端 host，落到 ChatGPT 首页。工作方跑在本地 host，所以必须带 `local`。
+   注意：深链只对 Codex App 本地 host **已加载**的线程有效。App 启动后新建的桥接线程通常要重启 Codex 才能被认识；App 没有可用的 Reload 菜单或 Ctrl+R。如果打开后仍落在 ChatGPT 首页，不要反复重试——重启 Codex 后再打开，或改用 Phase C 观测页/CLI。不要把“深链返回 OPENED”当成“线程一定可见”。
+4. 确认窗口已切到前台后，再发任务：`bridge_worker_turn({workerId, prompt})`。**不要先等任务完成**。
+5. 执行期间保持 Codex 窗口可见；结束后再用 `bridge_worker_result` / `bridge_worker_accept` / `bridge_worker_close` 收报告。
+
+注意：`bridge_worker_start` 带 `prompt` 时，首轮结束会自动 finalize，后续 `turn` 会被拒绝；所以默认不带 prompt。只有拿不到 `threadId`（旧记录或异常）时，才用 `focus-codex-thread.ps1 -Match "<标题片段>"` 兜底；标题是首轮 prompt 的截断，片段必须真的出现在侧栏标题里。`focus-codex-thread.ps1` 默认不再移动/缩放窗口；需要置顶才传 `-Topmost`。
 
 `bridge_ask` 只对**已经存在的 Codex 原会话**投递问题，它不唤醒会话，需要对方 `bridge_receive`；仅在要求续原会话时使用。`bridge_consult` 是 legacy 后台 `codex exec` 核对，不进列表；新讨论默认不用。
 
@@ -33,6 +39,14 @@
 **小计划**（可跳过评审）必须同时满足：1–2 个任务、≤ 3 个产品文件、无上述必评项、可逆、预计 ≤ 30 分钟。边界不清时按大计划处理——评审的成本是一分钟，返工的成本是半天。
 
 评审不可用（Codex 原会话不在线）时，停下来告诉人，不要静默跳过。
+
+## 计划评审工具（核心版）
+
+- 结构计划：`bridge_plan_review({planPath})` → `awaiting-visibility` → 确认可见后 `bridge_plan_review_continue({reviewId,confirmVisibility:true})` → `bridge_plan_review_result`。
+- 回应：`bridge_plan_review_respond`；issue 用 `{type:'issue',issueId,decision,evidence?,planChange?}`，question 用 `{type:'question',questionId:'Q1',answer}`；必须覆盖当前轮全部 blocker/major 和 questions。
+- 死锁：`bridge_plan_review_decide({choice:'1'})` 只用一次；`0` 取消；核心版不通过工具产生 waived。
+- 重启：`bridge_plan_review_recover`；同项目新会话可 `takeover:true`。
+- 边界：Stop 提醒 + PreToolUse ask/deny，不覆盖 Bash/git/worker 写入；不保证绝对阻断；daemon gate、微信、USD、强制 Focus 留后续。
 
 ## 其它
 

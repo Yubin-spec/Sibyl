@@ -266,7 +266,7 @@ export function isStructural(parsed) {
 export function parseVerdict(text, {focus = []} = {}) {
   const source = String(text ?? '');
   const blocks = [...source.matchAll(/<<<SIBYL_REVIEW\s*([\s\S]*?)\s*SIBYL_REVIEW>>>/g)];
-  if (blocks.length !== 1) return {ok: false, error: 'Expected exactly one SIBYL_REVIEW block'};
+  if (blocks.length !== 1) return {ok: false, error: 'Verdict must contain exactly one SIBYL_REVIEW block'};
   let value;
   try {
     value = JSON.parse(blocks[0][1]);

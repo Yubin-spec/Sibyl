@@ -16,8 +16,9 @@ rl.on('line',l=>{const c=JSON.parse(l);
  if(c.op==='close'){if(mode==='tree')return;process.stdout.write(JSON.stringify({id:c.id,type:'closed'})+'\\n');process.exit(0);}
  if(c.op!=='turn')return;
  if(mode==='hang')return;
- if(mode!=='read'){mkdirSync(join(process.cwd(),'src'),{recursive:true});writeFileSync(join(process.cwd(),'src','a.txt'),'worker\\n');}
- process.stdout.write(JSON.stringify({id:c.id,type:'turn',text:'done\\n<<<SIBYL_REPORT\\n{"summary":"done","verification":[],"unfinished":[],"blockers":[],"changeRequests":[]}\\nSIBYL_REPORT>>>',tools:[]})+'\\n');
+ if(mode!=='read'&&mode!=='review'){mkdirSync(join(process.cwd(),'src'),{recursive:true});writeFileSync(join(process.cwd(),'src','a.txt'),'worker\\n');}
+ const review='<<<SIBYL_REVIEW\\n{"verdict":"approve","summary":"ok","issues":[],"questions":[]}\\nSIBYL_REVIEW>>>';
+ process.stdout.write(JSON.stringify({id:c.id,type:'turn',text:mode==='review'?review:'done\\n<<<SIBYL_REPORT\\n{"summary":"done","verification":[],"unfinished":[],"blockers":[],"changeRequests":[]}\\nSIBYL_REPORT>>>',tools:[]})+'\\n');
 });
 rl.on('close',()=>process.exit(0));`;
 

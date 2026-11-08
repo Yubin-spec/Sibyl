@@ -19,14 +19,30 @@ description: Use when the user says "你和 Codex/Claude 协作", asks another l
 
 派活顺序固定：
 
-1. `bridge_worker_start({tool:"codex", tier:"consult"|"dispatch"|"parallel", scope?, prompt})` 建会话/工作方；
-2. **紧接着**运行 `powershell -NoProfile -ExecutionPolicy Bypass -File "D:\LXY_workspace\AI Bridge\Sibyl\scripts\focus-codex-thread.ps1" -Match "<任务标题里独有的片段>" -TimeoutSec 25`（绝对路径，不依赖当前目录），把 Codex 会话切到前台并确认已打开（脚本会轮询侧栏）；
-3. 确认可见后，再发/继续 `bridge_worker_turn`；**不要先等 `bridge_worker_result` 或完成**；
-4. 执行期间保持窗口可见，结束后再用 `bridge_worker_result` / `bridge_worker_accept` / `bridge_worker_close` 收报告。
+1. `bridge_worker_start({tool:"codex", tier:"consult"|"dispatch"|"parallel", scope?})` 建会话/工作方，**不要带 `prompt`**；
+2. 轮询 `bridge_worker_result({workerId, waitMs})`，直到返回非空 `threadId`（通常 <1 秒）；
+3. 用深链打开会话：
+   `powershell -NoProfile -ExecutionPolicy Bypass -File "D:\LXY_workspace\AI Bridge\Sibyl\scripts\open-codex-thread.ps1" -ThreadId "<threadId>"`
+   （绝对路径，不依赖当前目录；脚本默认带 `?hostId=local`，不带时 Codex 会查云端 host 并落到 ChatGPT 首页）；
+   深链只对 Codex App 本地 host **已加载**的线程有效。App 启动后新建的桥接线程通常要重启 Codex 才能被认识，App 没有可用的 Reload 或 Ctrl+R。如果打开后仍落在 ChatGPT 首页，不要反复重试——重启 Codex 后再打开，或改用 Phase C 观测页/CLI；不要把“OPENED”当成“一定可见”。
+4. 确认可见后，再发任务 `bridge_worker_turn({workerId, prompt})`；**不要先等任务完成**；
+5. 执行期间保持窗口可见，结束后再用 `bridge_worker_result` / `bridge_worker_accept` / `bridge_worker_close` 收报告。
+
+`bridge_worker_start` 带 `prompt` 时，首轮结束会自动 finalize，后续 `turn` 会被拒绝；所以默认不带 prompt。只有拿不到 `threadId`（旧记录或异常）时，才用 `focus-codex-thread.ps1 -Match "<标题片段>"` 兜底；标题是首轮 prompt 的截断，片段必须真的出现在侧栏标题里。`focus-codex-thread.ps1` 默认不再移动/缩放窗口；需要置顶才传 `-Topmost`。
 
 长评审的 `timeoutMs` 用 600000。`bridge_ask` 只用于续接已有原会话（不唤醒，需对方 `bridge_receive`）；`bridge_consult` 是 legacy 后台核对，Codex 路径使用 `codex exec` Worker，不进列表，仅人明确同意时用，事后必须同步到可见会话。
 
-上面的调用只示意档位；实际调用 `bridge_worker_start` 时还须传 `tool:"codex"` 和 `prompt`。旧版独立启动工具已在本版本移除。
+上面的调用只示意档位；实际调用 `bridge_worker_start` 时还须传 `tool:"codex"`；默认不带 `prompt`，先拿 `threadId` 打开会话，再 `bridge_worker_turn`。旧版独立启动工具已在本版本移除。
+
+## 第 2 步：计划评审回路
+
+结构计划用 `bridge_plan_review({planPath})` 启动评审；它创建一个只读 Codex worker，先停在 `awaiting-visibility`。用上面的深链确认可见后，调用 `bridge_plan_review_continue({reviewId,confirmVisibility:true})` 才发第一轮；`bridge_plan_review_result` 取 verdict。
+
+- `changes-required`：用 `bridge_plan_review_respond` 逐条回应。issue 用 `{type:'issue',issueId,decision:'accept'|'reject',evidence?,planChange?}`；question 用 `{type:'question',questionId:'Q1',answer}`。必须覆盖当前轮全部 blocker/major 和 questions。
+- `deadlock`：`bridge_plan_review_decide({choice:'1'})` 只用一次，启动最后一轮；`choice:'0'` 取消。核心版不通过工具产生 waived。
+- 重启后 `interrupted`：`bridge_plan_review_recover`；同项目新会话可传 `takeover:true`。
+- Stop hook 会提醒未批准的结构计划；PreToolUse 对 `Write/Edit/MultiEdit` 返回 ask，声明 `irreversible` 时 deny。它不覆盖 Bash/git/worker 写入，也不保证绝对阻断。
+- 非结构计划（`review: not-required` 且无 scope/concurrency/irreversible/规模）不会创建评审。
 
 ## 第 1 步：大计划先评审
 
