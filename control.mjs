@@ -1,5 +1,5 @@
 import http from 'node:http';
-import {defaultDataDir} from './runtime.mjs';
+import {defaultDataDir,listenLoopback} from './runtime.mjs';
 import {spawn} from 'node:child_process';
 import {createConnection} from 'node:net';
 import {readFile,writeFile,mkdir,readdir,rename,rm} from 'node:fs/promises';
@@ -131,9 +131,8 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).hr
  let closing=false;
  const shutdown=async()=>{if(closing)return;closing=true;try{await control.close();const record=JSON.parse(await readFile(runtimeFile,'utf8').catch(()=>'{}'));if(record.pid===process.pid)await rm(runtimeFile,{force:true});process.exit(0);}catch(e){console.error(e.message);process.exit(1);}};
  const control=await createControl({dir,onShutdown:shutdown});
- await new Promise((yes,no)=>{control.server.once('error',no);control.server.listen(0,'127.0.0.1',yes);});
- const url=`http://127.0.0.1:${control.server.address().port}`;
- await writeFile(runtimeFile,JSON.stringify({pid:process.pid,url}),{mode:0o600});
+ const port=await listenLoopback(control.server);
+ const url=`http://127.0.0.1:${port}`; await writeFile(runtimeFile,JSON.stringify({pid:process.pid,url}),{mode:0o600});
  console.log(`BRIDGE_UI_READY=${url}`);
  for(const signal of ['SIGINT','SIGTERM'])process.once(signal,shutdown);
 }

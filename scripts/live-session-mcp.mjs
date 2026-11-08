@@ -9,7 +9,7 @@ import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash,randomBytes,timingSafeEqual} from 'node:crypto';
 import {parseArgs} from 'node:util';
-import {defaultDataDir} from '../runtime.mjs';
+import {defaultDataDir,listenLoopback} from '../runtime.mjs';
 
 // A native ask may spend 30s submitting, 25s polling and 30s on its last read.
 // Let native-mcp return its recoverable question ID before the wrapper times out.
@@ -157,7 +157,7 @@ async function worker(o,path){
    }catch(e){send(e.status||400,{error:e.message});}finally{if(accepted){active--;lastCommandAt=Date.now();}}
   });
   server.requestTimeout=HTTP_TIMEOUT;server.headersTimeout=5000;
-  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});record.port=server.address().port;
+  record.port=await listenLoopback(server);
   const temp=path+'.'+instanceId+'.tmp',updated=await open(temp,'wx',0o600);await updated.writeFile(JSON.stringify(record));await updated.close();await rename(temp,path);
   const startupGraceEnds=Date.now()+1000;
   idle=setInterval(()=>{if(!active&&Date.now()>=startupGraceEnds&&Date.now()-lastCommandAt>=o.idleTtlMs)void stop();},Math.min(10000,o.idleTtlMs));idle.unref();

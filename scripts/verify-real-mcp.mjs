@@ -48,7 +48,7 @@ function childChannel(executable,args,onMessage,onClosed,env=process.env){
   child.stderr.on('data',chunk=>{const line=chunk.toString().toLowerCase();const classes=['unknown option','invalid argument','authentication','api key','stream-json','permission','login','error'];stderrClass=classes.find(term=>line.includes(term))||stderrClass;});child.stdin.on('error',()=>{});
   child.on('error',()=>onClosed());
   createInterface({input:child.stdout}).on('line',line=>{try{onMessage(JSON.parse(line));}catch(error){if(error.validation)onClosed(error);}});
-  return {child,send:value=>{validation(!closed,'Client process exited');child.stdin.write(JSON.stringify(value)+'\n');},async close(){if(closed)return;child.stdin.end();let timer;await Promise.race([ended,new Promise(r=>{timer=setTimeout(r,5000);})]);clearTimeout(timer);if(!closed){child.kill('SIGTERM');await ended;}}};
+  return {child,send:value=>{validation(!closed,'Client process exited');child.stdin.write(JSON.stringify(value)+'\n');},async close(){if(closed)return;child.stdin.end();let timer;await Promise.race([ended,new Promise(r=>{timer=setTimeout(r,5000);})]);clearTimeout(timer);if(!closed){try{child.kill('SIGTERM');}catch{}const force=setTimeout(()=>{if(!closed){try{child.kill('SIGKILL');}catch{}}},2000);await Promise.race([ended,new Promise(r=>setTimeout(r,5000))]);clearTimeout(force);}}};
 }
 async function codexHost(executable,mcp){
   const pending=new Map();let serial=0,active,channel;

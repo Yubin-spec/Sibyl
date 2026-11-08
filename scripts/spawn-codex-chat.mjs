@@ -18,6 +18,7 @@ const {values}=parseArgs({options:{
   instructions:{type:'string'},
   'one-shot':{type:'boolean',default:false},
   hold:{type:'boolean',default:false},
+  rpc:{type:'boolean',default:false},
   'timeout-ms':{type:'string',default:'180000'},
   help:{type:'boolean',default:false},
 },strict:true});
@@ -27,6 +28,7 @@ if(values.help){console.log([
   '  --prompt    first user turn; omit to create an idle thread',
   '  --one-shot  close the host after the first turn; omit to stay interactive',
   '  --hold      keep the host alive after the prompt even when stdin is not a TTY',
+  '  --rpc       line-delimited JSON control: {"id","op":"turn","prompt"} or {"id","op":"close"}',
   '  --sandbox   read-only | workspace-write | danger-full-access (default: workspace-write)',
   '  --effort    low | medium | high | ultra (default: high)',
   '  --codex     explicit codex executable path',
@@ -109,6 +111,20 @@ try{
   const result=await request('thread/start',{cwd:project,sandbox:values.sandbox,approvalPolicy:values['approval-policy'],...(values.instructions?{developerInstructions:values.instructions}:{}),config:overrides});
   threadId=result.thread.id;
   console.log(JSON.stringify({type:'thread',threadId,sessionId:result.thread.sessionId||threadId,cwd:project,hostPid:process.pid}));
+  if(values.rpc){
+    const rl=createInterface({input:process.stdin});
+    const send=value=>process.stdout.write(JSON.stringify(value)+'\n');
+    let chain=Promise.resolve();
+    rl.on('line',line=>{chain=chain.then(async()=>{
+      let command;try{command=JSON.parse(line);}catch{send({type:'error',error:'Invalid JSON'});return;}
+      if(command.op==='close'){await channel.close();send({id:command.id,type:'closed'});process.exit(exitCode);}
+      if(command.op!=='turn'||typeof command.prompt!=='string'||!command.prompt.trim()){send({id:command.id,type:'error',error:'Expected turn with prompt or close'});return;}
+      try{const value=await turn(command.prompt);send({id:command.id,type:'turn',text:value.text,tools:value.calls.map(c=>({name:c.name,succeeded:!c.error}))});}
+      catch(error){send({id:command.id,type:'error',error:error?.message||String(error)});}
+    }).catch(error=>send({type:'error',error:error?.message||String(error)}));});
+    rl.on('close',()=>{void channel.close().finally(()=>process.exit(exitCode));});
+    await new Promise(()=>{});
+  }
   if(values.prompt)output(await turn(values.prompt));
   if(values['one-shot']){await channel.close();process.exit(exitCode);}
   if(process.stdin.isTTY){
