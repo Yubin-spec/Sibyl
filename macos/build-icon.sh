@@ -10,10 +10,10 @@ trap 'rm -rf "$TMP"' EXIT
 
 [[ -f "$SOURCE" ]] || { print -u2 "Missing icon source: $SOURCE"; exit 1; }
 
-# Quick Look 负责把 SVG 栅格化成 1024px，再交给 sips 生成 macOS 需要的全部尺寸。
-qlmanage -t -s 1024 -o "$TMP" "$SOURCE" >/dev/null
-PNG="$TMP/$(basename "$SOURCE").png"
-[[ -f "$PNG" ]] || { print -u2 "Quick Look did not render $SOURCE"; exit 1; }
+# sips 直接栅格化 SVG，保留圆角外的透明通道；Quick Look 会额外铺一层不透明白底。
+PNG="$TMP/AppIcon.png"
+sips -s format png "$SOURCE" --out "$PNG" >/dev/null
+[[ -f "$PNG" ]] || { print -u2 "sips did not render $SOURCE"; exit 1; }
 
 ICONSET="$TMP/AppIcon.iconset"
 mkdir -p "$ICONSET"
