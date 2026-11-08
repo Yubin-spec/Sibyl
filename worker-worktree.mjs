@@ -34,7 +34,7 @@ export async function isGitRepository(projectPath) {
   }
 }
 
-async function assertSupportedRepository(projectPath) {
+export async function assertSupportedRepository(projectPath) {
   let real;
   try {
     real = canonicalProjectPath(projectPath);
