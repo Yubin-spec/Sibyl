@@ -131,6 +131,10 @@ form>.primary,form>button{margin-top:16px}
 /* 原会话最近 100 条记录固定高度滚动，避免持续撑高页面。 */
 #nativeQuestions{height:clamp(280px,44vh,520px);align-content:start;grid-auto-rows:max-content;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:14px;border:1px solid var(--line);border-radius:16px;background:var(--fill)}
 
+/* 已登记的专用 CLI 会话同样限制高度，测试记录再多也不会继续拉长页面。 */
+#sessions{height:clamp(220px,32vh,400px);align-content:start;grid-auto-rows:max-content;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:14px;border:1px solid var(--line);border-radius:16px;background:var(--fill)}
+#sessions .sessions-note{margin:0;padding:2px 4px 4px}
+
 .diagnostic-output{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--fill);border-radius:10px;padding:10px;margin:10px 0}
 
 .metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}

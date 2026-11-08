@@ -1516,6 +1516,16 @@ function renderBindings() {
 function renderSessions() {
   changed("sessions", [state.sessions, state.projects], () => {
     $("sessions").replaceChildren();
+
+    // 专用 CLI 会话是 App 另行托管的独立进程，不是用户原工具里的聊天。
+    // 这段说明留在列表内部，避免用户把测试/核对会话误认为原会话收件记录。
+    $("sessions").append(
+      node(
+        "p",
+        "这里的“专用 CLI 会话”是 App 为跨工具核对或联调单独启动并保存的独立会话，不是你在 Codex、Claude、Cursor、DeepSeek 里打开的原聊天；原聊天收件与回复在上方灰色框中。",
+        "sessions-note",
+      ),
+    );
     for (const s of state.sessions) {
       const e = card(
         s.title || "已登记会话",
@@ -1528,7 +1538,7 @@ function renderSessions() {
             ? s.capability === "unregistered"
               ? "未接入原会话 · 等待真实连接器登记"
               : "原生收件箱登记 · 以工具实际收信为准"
-            : "专用 CLI 会话",
+            : "专用 CLI · 独立会话",
           "badge",
         ),
         node("span", s.shared ? "允许发现" : "仅本机", "badge"),
