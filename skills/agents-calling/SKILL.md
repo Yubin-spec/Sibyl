@@ -20,7 +20,7 @@ description: Use when the user says "你和 Codex/Claude 协作", asks another l
 派活顺序固定：
 
 1. `bridge_worker_start({tool:"codex", tier:"consult"|"dispatch"|"parallel", scope?, prompt})` 建会话/工作方；
-2. **紧接着**运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/focus-codex-thread.ps1 -Match "<任务标题里独有的片段>" -TimeoutSec 25`，把 Codex 会话切到前台并确认已打开（脚本会轮询侧栏）；
+2. **紧接着**运行 `powershell -NoProfile -ExecutionPolicy Bypass -File "D:\LXY_workspace\AI Bridge\Sibyl\scripts\focus-codex-thread.ps1" -Match "<任务标题里独有的片段>" -TimeoutSec 25`（绝对路径，不依赖当前目录），把 Codex 会话切到前台并确认已打开（脚本会轮询侧栏）；
 3. 确认可见后，再发/继续 `bridge_worker_turn`；**不要先等 `bridge_worker_result` 或完成**；
 4. 执行期间保持窗口可见，结束后再用 `bridge_worker_result` / `bridge_worker_accept` / `bridge_worker_close` 收报告。
 

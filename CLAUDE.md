@@ -9,7 +9,7 @@
 1. 新建 Codex 会话/工作方：
    - 只读讨论：`bridge_worker_start({tool:"codex", tier:"consult", prompt})`；
    - 写任务：`bridge_worker_start({tool:"codex", tier:"dispatch"|"parallel", scope, prompt})`。
-2. **紧接着**运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/focus-codex-thread.ps1 -Match "<任务标题里独有的片段>" -TimeoutSec 25`，把 Codex 窗口切到前台、打开该会话并保持可见。脚本会轮询侧栏直到会话出现。
+2. **紧接着**运行 `powershell -NoProfile -ExecutionPolicy Bypass -File "D:\LXY_workspace\AI Bridge\Sibyl\scripts\focus-codex-thread.ps1" -Match "<任务标题里独有的片段>" -TimeoutSec 25`（用绝对路径，不要依赖当前目录；父目录 `D:\LXY_workspace\AI Bridge` 下没有这个脚本），把 Codex 窗口切到前台、打开该会话并保持可见。脚本会轮询侧栏直到会话出现。
 3. 确认会话已打开后，再发/继续任务 turn（`bridge_worker_turn` 或 `bridge_spawn_turn`）。**不要先等 `bridge_worker_result` 或任务完成**。
 4. 执行期间保持 Codex 窗口可见；结束后再用 `bridge_worker_result` / `bridge_worker_accept` / `bridge_worker_close` 收报告。
 
