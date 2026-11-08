@@ -179,7 +179,7 @@ Claude Code 插件包（MCP + Skill + 斜杠命令）与 Codex 侧的 `AGENTS.md
 ## 11. 未决问题
 
 1. ~~第一阶段在哪套布局上做。~~ **已定：不合 `develop`。** 勘测结论是 `develop` 把整套代码重写成了多行带注释的版本（`control.mjs` 126 → 2036 行等），语义相同但每一行都不同，无法自动合并；并且它删掉了 `runtime.mjs`（并进 macOS 专用的 `src/bridge/bridge.mjs`）与整个 `scripts/` 目录，数据目录写死 macOS 路径、后端由 App 启动——那里没有独立 daemon。第一阶段在 `feat/windows-support` 的现有布局上做；`develop` 的重写等第一阶段跑顺之后，作为一次独立的代码风格升级再吸收。
-2. 工作方的命令白名单：第一阶段全网关、需要确认的命令一律变成阻塞项；之后要不要按项目放开。
+2. 工作方的命令白名单：第一阶段全网关、需要确认的命令一律变成阻塞项；之后要不要按项目放开。**实测补充（2026-11-08）**：Codex 在 Windows 的 `workspace-write` 沙箱下拒绝创建子进程（`spawn EPERM`），因此 Codex 工作方无法运行任何测试，只能改文件；Claude 工作方在 Windows 上走 PowerShell，允许规则必须写成 `PowerShell(node --test *)` 而不是只写 `Bash(...)`，否则同样跑不了测试。这两条决定了"工作方能否自验"这一前提是否成立。
 3. 产品化阶段的收费与开源边界（不影响第一阶段实现）。
 
 ## 12. 交给 builder 的部分
