@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {mkdtemp,mkdir,writeFile,readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {buildClaudeArgs,runClaudeTurn} from './scripts/spawn-claude-chat.mjs';
+import {buildClaudeArgs,runClaudeTurn,killWorkers} from './scripts/spawn-claude-chat.mjs';
 
 const head=maxTurns=>['-p','--output-format','json','--strict-mcp-config',
   '--mcp-config','{"mcpServers":{}}','--max-turns',String(maxTurns)];
@@ -125,6 +125,19 @@ async function host(fake){
   return {child,next,exited,log,send:value=>child.stdin.write(JSON.stringify(value)+'\n')};
 }
 
+const sleep=ms=>new Promise(resolveSleep=>setTimeout(resolveSleep,ms));
+const alive=pid=>{try{process.kill(pid,0);return true;}catch{return false;}};
+
+async function waitFor(predicate,timeoutMs=5000){
+  const deadline=Date.now()+timeoutMs;
+  while(Date.now()<deadline){
+    let value;try{value=await predicate();}catch{value=null;}
+    if(value)return value;
+    await sleep(25);
+  }
+  throw Error('condition not met within '+timeoutMs+' ms');
+}
+
 test('rpc host runs two turns and resumes the session on the second',async()=>{
   const h=await host(fakeBody);
   const thread=await h.next();
@@ -154,4 +167,26 @@ test('a second turn is rejected while one is already running',async()=>{
   h.send({id:3,op:'close'});
   while((await h.next()).type!=='closed'){}
   await h.exited;
+});
+
+// The host must not leave a writable claude child behind when it is stopped.
+// Checked directly rather than through `close`, because on Windows the child
+// dies with its parent anyway, so the close path cannot fail here.
+test('killWorkers stops an in-flight turn',async()=>{
+  const slow=`import {writeFileSync} from 'node:fs';
+writeFileSync(process.env.FAKE_PID,String(process.pid));
+setTimeout(()=>{process.stdout.write(JSON.stringify({result:'slow',session_id:'s1',is_error:false}));},10000);`;
+  const root=await mkdtemp(join(tmpdir(),'fake-claude-'));
+  const script=join(root,'slow.mjs'),pidFile=join(root,'pid');
+  await writeFile(script,slow);
+  const env={...process.env,FAKE_PID:pidFile};
+  const turn=runClaudeTurn({prompt:'x',executable:{command:process.execPath,args:[script]},env});
+  const pid=Number(await waitFor(async()=>{
+    const text=(await readFile(pidFile,'utf8')).trim();
+    return text?text:null;
+  }));
+  assert.ok(pid>0);
+  killWorkers();
+  await assert.rejects(turn,/exited|killed/);
+  await waitFor(()=>!alive(pid));
 });

@@ -13,6 +13,14 @@ export const WORKER_POLICY = `你是 Agents Calling 启动的工作方，不是�
 
 const EFFORTS={low:'low',medium:'medium',high:'high',ultra:'max'};
 
+// Children stay referenced so a stopped host can take them down with it.
+const children=new Set();
+
+export function killWorkers(){
+  for(const child of children){try{child.kill('SIGKILL');}catch{}}
+  children.clear();
+}
+
 const SANDBOXES={
   'read-only':['--tools','Read,Grep,Glob'],
   'workspace-write':['--permission-mode','acceptEdits','--allowedTools','Read,Grep,Glob,Edit,Write,Bash(node --test *)'],
@@ -34,6 +42,7 @@ export async function runClaudeTurn({prompt,session=null,sandbox='read-only',eff
   const args=[...runnable.args,...buildClaudeArgs({sandbox,effort,session})];
   return await new Promise((resolve,reject)=>{
     const child=spawn(runnable.command,args,{cwd,env:childEnv,stdio:['pipe','pipe','pipe'],windowsHide:true});
+    children.add(child);
     let stdout='',stderr='',settled=false;
     const fail=error=>{if(settled)return;settled=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);reject(error);};
     const done=value=>{if(settled)return;settled=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);resolve(value);};
@@ -47,6 +56,7 @@ export async function runClaudeTurn({prompt,session=null,sandbox='read-only',eff
     child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-2000);});
     child.stdin.on('error',()=>{});
     child.on('close',code=>{
+      children.delete(child);
       if(settled)return;
       if(code!==0)return fail(Error('Claude exited '+code+(stderr?': '+stderr.trim():'')));
       let value;try{value=JSON.parse(stdout);}catch{return fail(Error('Claude returned an unsuccessful or invalid result'));}
@@ -91,7 +101,7 @@ export async function main(argv=process.argv.slice(2)){
 
   async function handle(line){
     let command;try{command=JSON.parse(line);}catch{send({type:'error',error:'Invalid JSON'});return;}
-    if(command.op==='close'){send({id:command.id,type:'closed'});process.exit(0);}
+    if(command.op==='close'){send({id:command.id,type:'closed'});killWorkers();process.exit(0);}
     if(command.op!=='turn'){send({id:command.id,type:'error',error:'Unknown op'});return;}
     if(running){send({id:command.id,type:'error',error:'A turn is already running in this worker'});return;}
     running=(async()=>{
@@ -107,7 +117,7 @@ export async function main(argv=process.argv.slice(2)){
 
   const lines=createInterface({input:process.stdin});
   lines.on('line',line=>{void handle(line);});
-  lines.on('close',()=>process.exit(0));
+  lines.on('close',()=>{killWorkers();process.exit(0);});
 }
 
 const invoked=process.argv[1]?pathToFileURL(resolve(process.argv[1])).href:null;
