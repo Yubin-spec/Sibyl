@@ -25,19 +25,21 @@ const SANDBOXES={
 };
 
 // Args only: the prompt travels on stdin, so it never lands in a process list.
-export function buildClaudeArgs({sandbox='read-only',effort='high',session=null}={}){
+export function buildClaudeArgs({sandbox='read-only',effort='high',session=null,model=null}={}){
   if(!Object.hasOwn(SANDBOXES,sandbox)) throw Error('sandbox must be read-only or workspace-write');
   if(!Object.hasOwn(EFFORTS,effort)) throw Error('effort must be low, medium, high or ultra');
-  const args=['-p','--output-format','json','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--max-turns',sandbox==='workspace-write'?'40':'4',...SANDBOXES[sandbox],'--effort',EFFORTS[effort],'--append-system-prompt',WORKER_POLICY];
+  const args=['-p','--output-format','json','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--max-turns',sandbox==='workspace-write'?'40':'4',...SANDBOXES[sandbox],'--effort',EFFORTS[effort]];
+  if(model) args.push('--model',model);
+  args.push('--append-system-prompt',WORKER_POLICY);
   if(session) args.push('--resume',session);
   return args;
 }
 
-export async function runClaudeTurn({prompt,session=null,sandbox='read-only',effort='high',timeoutMs=180000,cwd=process.cwd(),executable=null,env=process.env,signal}={}){
+export async function runClaudeTurn({prompt,session=null,sandbox='read-only',effort='high',model=null,timeoutMs=180000,cwd=process.cwd(),executable=null,env=process.env,signal}={}){
   if(!Number.isInteger(timeoutMs)||timeoutMs<1000||timeoutMs>600000) throw Error('timeoutMs must be 1000..600000');
   const runnable=executable??await resolveAgentExecutable('claude',{env});
   const childEnv=await agentEnv('claude',env);
-  const args=[...runnable.args,...buildClaudeArgs({sandbox,effort,session})];
+  const args=[...runnable.args,...buildClaudeArgs({sandbox,effort,session,model})];
   return await new Promise((resolve,reject)=>{
     const child=spawn(runnable.command,args,{cwd,env:childEnv,stdio:['pipe','pipe','pipe'],windowsHide:true});
     children.add(child);
@@ -72,6 +74,7 @@ export async function main(argv=process.argv.slice(2)){
     rpc:{type:'boolean',default:false},
     sandbox:{type:'string',default:'read-only'},
     effort:{type:'string',default:'high'},
+    model:{type:'string'},
     claude:{type:'string'},
     'timeout-ms':{type:'string',default:'180000'},
     help:{type:'boolean',default:false},
@@ -82,6 +85,7 @@ export async function main(argv=process.argv.slice(2)){
     '  --claude      explicit Claude executable or Node entry file',
     '  --sandbox     read-only (default) or workspace-write',
     '  --effort      low | medium | high | ultra (default: high)',
+    '  --model       Claude model id (default: Claude config)',
     '  --timeout-ms  per-turn timeout, 1000..600000 (default: 180000)',
     '  --dir         accepted for parity with the Codex launcher; unused',
     '  --rpc         accepted for parity with the Codex launcher; this host is RPC-only',
@@ -104,7 +108,7 @@ export async function main(argv=process.argv.slice(2)){
     if(running){send({id:command.id,type:'error',error:'A turn is already running in this worker'});return;}
     running=(async()=>{
       try{
-        const result=await runClaudeTurn({prompt:String(command.prompt??''),session,sandbox:values.sandbox,effort:values.effort,timeoutMs,cwd:project,executable:runnable});
+        const result=await runClaudeTurn({prompt:String(command.prompt??''),session,sandbox:values.sandbox,effort:values.effort,model:values.model,timeoutMs,cwd:project,executable:runnable});
         session=result.sessionId;
         send({id:command.id,type:'turn',text:result.text,tools:[]});
       }catch(error){
@@ -116,6 +120,8 @@ export async function main(argv=process.argv.slice(2)){
   const lines=createInterface({input:process.stdin});
   lines.on('line',line=>{void handle(line);});
   lines.on('close',()=>{killWorkers();process.exit(0);});
+  process.once('SIGTERM',()=>{killWorkers();process.exit(0);});
+  process.once('SIGINT',()=>{killWorkers();process.exit(0);});
 }
 
 const invoked=process.argv[1]?pathToFileURL(resolve(process.argv[1])).href:null;

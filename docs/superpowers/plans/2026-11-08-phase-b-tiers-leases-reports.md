@@ -791,7 +791,7 @@ process.stdout.write(JSON.stringify({type:'thread',threadId:'fake-'+process.pid,
 const report=v=>'done\\n<<<SIBYL_REPORT\\n'+JSON.stringify(v)+'\\nSIBYL_REPORT>>>';
 const rl=createInterface({input:process.stdin});
 rl.on('line',line=>{const c=JSON.parse(line);
- if(c.op==='close'){process.stdout.write(JSON.stringify({id:c.id,type:'closed'})+'\\n');process.exit(0);}
+ if(c.op==='close'){if(mode==='tree')return;process.stdout.write(JSON.stringify({id:c.id,type:'closed'})+'\\n');process.exit(0);}
  if(c.op!=='turn')return;
  if(mode==='hang')return;
  if(mode==='fail'){process.stdout.write(JSON.stringify({id:c.id,type:'error',error:'worker exploded'})+'\\n');return;}
@@ -1301,7 +1301,7 @@ const mode='__MODE__';
 process.stdout.write(JSON.stringify({type:'thread',threadId:'fake-'+process.pid,sessionId:'fake'})+'\\n');
 const rl=createInterface({input:process.stdin});
 rl.on('line',l=>{const c=JSON.parse(l);
- if(c.op==='close'){process.stdout.write(JSON.stringify({id:c.id,type:'closed'})+'\\n');process.exit(0);}
+ if(c.op==='close'){if(mode==='tree')return;process.stdout.write(JSON.stringify({id:c.id,type:'closed'})+'\\n');process.exit(0);}
  if(c.op!=='turn')return;
  if(mode==='hang')return;
  if(mode!=='read'){mkdirSync(join(process.cwd(),'src'),{recursive:true});writeFileSync(join(process.cwd(),'src','a.txt'),'worker\\n');}

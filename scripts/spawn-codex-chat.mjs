@@ -12,6 +12,7 @@ const {values}=parseArgs({options:{
   project:{type:'string',default:process.cwd()},
   prompt:{type:'string'},
   effort:{type:'string',default:'high'},
+  model:{type:'string'},
   sandbox:{type:'string',default:'workspace-write'},
   'approval-policy':{type:'string',default:'never'},
   codex:{type:'string'},
@@ -31,6 +32,7 @@ if(values.help){console.log([
   '  --rpc       line-delimited JSON control: {"id","op":"turn","prompt"} or {"id","op":"close"}',
   '  --sandbox   read-only | workspace-write | danger-full-access (default: workspace-write)',
   '  --effort    low | medium | high | ultra (default: high)',
+  '  --model     Codex model slug (default: use config)',
   '  --codex     explicit codex executable path',
   '  --dir       AI Bridge data dir (default: user data dir)',
 ].join('\n'));process.exit(0);}
@@ -55,7 +57,7 @@ const mcp={'ai-bridge':{
   tool_timeout_sec:35,
   default_tools_approval_mode:'approve',
 }};
-const overrides={mcp_servers:mcp,sandbox_mode:values.sandbox,approval_policy:values['approval-policy'],model_reasoning_effort:values.effort,web_search:'disabled'};
+const overrides={mcp_servers:mcp,sandbox_mode:values.sandbox,approval_policy:values['approval-policy'],model_reasoning_effort:values.effort,web_search:'disabled',...(values.model?{model:values.model}:{})};
 const toml=v=>typeof v==='object'&&!Array.isArray(v)?'{'+Object.entries(v).map(([k,x])=>JSON.stringify(k)+'='+toml(x)).join(',')+'}':Array.isArray(v)?'['+v.map(toml).join(',')+']':JSON.stringify(v);
 
 function decode(value){
@@ -115,14 +117,17 @@ try{
     const rl=createInterface({input:process.stdin});
     const send=value=>process.stdout.write(JSON.stringify(value)+'\n');
     let chain=Promise.resolve();
-    rl.on('line',line=>{chain=chain.then(async()=>{
+    rl.on('line',line=>{
       let command;try{command=JSON.parse(line);}catch{send({type:'error',error:'Invalid JSON'});return;}
-      if(command.op==='close'){await channel.close();send({id:command.id,type:'closed'});process.exit(exitCode);}
+      if(command.op==='close'){void channel.close().finally(()=>{send({id:command.id,type:'closed'});process.exit(exitCode);});return;}
+      chain=chain.then(async()=>{
       if(command.op!=='turn'||typeof command.prompt!=='string'||!command.prompt.trim()){send({id:command.id,type:'error',error:'Expected turn with prompt or close'});return;}
       try{const value=await turn(command.prompt);send({id:command.id,type:'turn',text:value.text,tools:value.calls.map(c=>({name:c.name,succeeded:!c.error}))});}
       catch(error){send({id:command.id,type:'error',error:error?.message||String(error)});}
     }).catch(error=>send({type:'error',error:error?.message||String(error)}));});
     rl.on('close',()=>{void channel.close().finally(()=>process.exit(exitCode));});
+    process.once('SIGTERM',()=>{void channel.close().finally(()=>process.exit(exitCode));});
+    process.once('SIGINT',()=>{void channel.close().finally(()=>process.exit(exitCode));});
     await new Promise(()=>{});
   }
   if(values.prompt)output(await turn(values.prompt));
