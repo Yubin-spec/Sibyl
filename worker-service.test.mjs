@@ -55,6 +55,7 @@ test('start returns before the first turn and the report is built from git',asyn
     assert.equal(started.report,undefined);
     assert.ok(started.worktreePath.endsWith(join('.sibyl','worktrees',started.workerId)));
     const done=await wait(async()=>{const r=await f.service.result({session:f.session,workerId:started.workerId,waitMs:200});return r.status==='completed'?r:null;});
+    assert.match(done.threadId,/^fake-/);
     assert.deepEqual(done.report.files.modified,['src/a.txt']);
     assert.ok(await stat(join(f.project,'.sibyl','reports',started.workerId+'.patch')));
     assert.equal(git(f.project,'rev-parse','HEAD').trim(),head);
@@ -412,4 +413,21 @@ test('a finished sibling branch is not reported as an unexpected ref change',asy
     const closed=await f.service.close({session:f.session,workerId:b.workerId});
     assert.equal(closed.report.refsChanged,undefined);
   }finally{await f.cleanup();}
+});
+
+test('a consult worker can start without the ai-bridge MCP',async()=>{
+  const argsFile=join(tmpdir(),'worker-args-'+Date.now()+'.json');
+  process.env.FAKE_ARGS_FILE=argsFile;
+  const f=await fixture('read');
+  try{
+    const started=await f.service.start({session:f.session,tool:'codex',tier:'consult',mcp:'none'});
+    const running=await wait(async()=>{const r=await f.service.result({session:f.session,workerId:started.workerId,waitMs:50});return r.status==='running'?r:null;});
+    assert.match(running.threadId,/^fake-/);
+    const args=JSON.parse(await readFile(argsFile,'utf8'));
+    assert.ok(args.includes('--mcp'));
+    assert.equal(args[args.indexOf('--mcp')+1],'none');
+    assert.equal(args[args.indexOf('--sandbox')+1],'read-only');
+    assert.equal(started.worktreePath,null);
+    await f.service.close({session:f.session,workerId:started.workerId});
+  }finally{delete process.env.FAKE_ARGS_FILE;await f.cleanup();}
 });

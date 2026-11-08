@@ -94,6 +94,8 @@ export function createWorkerService({
       model: record.model,
       effort: record.effort,
       modelReason: record.modelReason,
+      mcp: record.mcp,
+      threadId: record.threadId,
       startedAt: record.startedAt,
       updatedAt: record.updatedAt,
       endedAt: record.endedAt,
@@ -181,7 +183,7 @@ export function createWorkerService({
     const cwd = record.tier === 'consult' ? record.projectPath : record.worktreePath;
     const args = [script, '--rpc', '--dir', dataDir, '--project', cwd,
       '--sandbox', record.tier === 'consult' ? 'read-only' : 'workspace-write',
-      '--effort', record.effort ?? 'high', '--timeout-ms', '600000'];
+      '--effort', record.effort ?? 'high', '--timeout-ms', '600000', '--mcp', record.mcp ?? 'full'];
     if (record.model) args.push('--model', record.model);
     if (record.tool === 'codex') args.push('--instructions', WORKER_POLICY);
     const child = spawn(process.execPath, args, {cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32'});
@@ -431,6 +433,8 @@ export function createWorkerService({
     const requestedModel = input.model ?? 'auto';
     if (typeof requestedModel !== 'string' || requestedModel.length > 80) throw Error('Invalid model');
     if (input.effort !== undefined && !EFFORTS.includes(input.effort)) throw Error('effort must be low, medium, high or ultra');
+    const mcp = input.mcp ?? 'full';
+    if (!['full', 'none'].includes(mcp)) throw Error('mcp must be full or none');
     let model;
     let effort;
     let modelReason;
@@ -473,6 +477,7 @@ export function createWorkerService({
       model,
       effort,
       modelReason,
+      mcp,
       startedAt: timestamp,
       updatedAt: timestamp,
       lastProgressAt: timestamp,

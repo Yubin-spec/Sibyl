@@ -95,9 +95,10 @@ async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consu
           body.model!==undefined&&!text(body.model,80)||
           body.kind!==undefined&&!['review','implement','mechanical','frontier'].includes(body.kind)||
           body.risk!==undefined&&!['normal','high'].includes(body.risk)||
-          body.effort!==undefined&&!['low','medium','high','ultra'].includes(body.effort)||!workerTimeout(body.timeoutMs))throw Error('Invalid worker start request');
+          body.effort!==undefined&&!['low','medium','high','ultra'].includes(body.effort)||
+          body.mcp!==undefined&&!['full','none'].includes(body.mcp)||!workerTimeout(body.timeoutMs))throw Error('Invalid worker start request');
         if(typeof worker.start!=='function')throw Error('Worker service is unavailable');
-        return send(202,await worker.start({session:{...publicSession(s),projectPath:s.projectPath},tool:body.tool,tier:body.tier,scope:body.scope,leadScope:body.leadScope,prompt:body.prompt,model:body.model,kind:body.kind,risk:body.risk,effort:body.effort,timeoutMs:body.timeoutMs}));
+        return send(202,await worker.start({session:{...publicSession(s),projectPath:s.projectPath},tool:body.tool,tier:body.tier,scope:body.scope,leadScope:body.leadScope,prompt:body.prompt,model:body.model,kind:body.kind,risk:body.risk,effort:body.effort,mcp:body.mcp,timeoutMs:body.timeoutMs}));
       }
       if(req.url==='/worker/turn'){
         if(!workerId(body.workerId)||!text(body.prompt,20000)||!workerTimeout(body.timeoutMs))throw Error('Invalid worker request');

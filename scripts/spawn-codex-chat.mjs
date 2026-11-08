@@ -21,6 +21,7 @@ const {values}=parseArgs({options:{
   hold:{type:'boolean',default:false},
   rpc:{type:'boolean',default:false},
   'timeout-ms':{type:'string',default:'180000'},
+  mcp:{type:'string',default:'full'},
   help:{type:'boolean',default:false},
 },strict:true});
 if(values.help){console.log([
@@ -35,6 +36,7 @@ if(values.help){console.log([
   '  --model     Codex model slug (default: use config)',
   '  --codex     explicit codex executable path',
   '  --dir       AI Bridge data dir (default: user data dir)',
+  '  --mcp       full | none (default: full; none omits the ai-bridge MCP)',
 ].join('\n'));process.exit(0);}
 
 const dir=resolve(values.dir),project=resolve(values.project),nativeMcp=fileURLToPath(new URL('../native-mcp.mjs',import.meta.url));
@@ -49,6 +51,7 @@ if(!preflight.ok)throw Error('Local inbox authentication failed');
 await preflight.body?.cancel();
 
 const executable=await resolveAgentExecutable('codex',{executables:values.codex?{codex:values.codex}:undefined});
+if(!['full','none'].includes(values.mcp))throw Error('mcp must be full or none');
 const mcp={'ai-bridge':{
   command:process.execPath,
   args:[nativeMcp,'--dir',dir,'--tool','codex'],
@@ -57,7 +60,8 @@ const mcp={'ai-bridge':{
   tool_timeout_sec:35,
   default_tools_approval_mode:'approve',
 }};
-const overrides={mcp_servers:mcp,sandbox_mode:values.sandbox,approval_policy:values['approval-policy'],model_reasoning_effort:values.effort,web_search:'disabled',...(values.model?{model:values.model}:{})};
+const mcpServers=values.mcp==='none'?{}:mcp;
+const overrides={mcp_servers:mcpServers,sandbox_mode:values.sandbox,approval_policy:values['approval-policy'],model_reasoning_effort:values.effort,web_search:'disabled',...(values.model?{model:values.model}:{})};
 const toml=v=>typeof v==='object'&&!Array.isArray(v)?'{'+Object.entries(v).map(([k,x])=>JSON.stringify(k)+'='+toml(x)).join(',')+'}':Array.isArray(v)?'['+v.map(toml).join(',')+']':JSON.stringify(v);
 
 function decode(value){
