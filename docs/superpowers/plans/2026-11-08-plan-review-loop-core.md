@@ -827,3 +827,11 @@ Verdict：**approve**。无 blocker/major；1 minor（恢复测试复用 fake，
 - 独立 `review` tier、persistent 同线程多轮、watchdog pause。
 - 动作日志、崩溃精确重放、多计划批准绑定、可达性保留策略。
 - 运行台可视化、本地模型第二意见、ACP `session/load`。
+
+## Implementation status（2026-11-09）
+
+- Task 1–6 implemented on `feat/windows-support`.
+- Commits：`23d3bd1` policy；`fde2a5e` service + persistence；`749e9e9` worker MCP isolation；`814b798` endpoints + tools；`6a12de0` hooks；`b44a125` wiring + docs。
+- Full suite：262 tests，258 pass / 4 skip / 0 fail（Node 26，2026-11-09）。
+- 未做/留后续：真实 Codex 可见性验收（需在 Codex 重启后确认线程可见）、微信死锁通道、daemon gate、persistent 同线程、USD 计量、强制 Focus 覆盖、运行台可视化。
+- 已知限制：PreToolUse 只覆盖 `Write`/`Edit`/`MultiEdit`/`NotebookEdit`；Bash/git/worker 写入不硬拦；`awaiting-visibility` 需要人/CLI 确认；评审 worker 占 consult 容量。
