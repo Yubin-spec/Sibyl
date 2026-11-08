@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 import {makeClient} from './bridge.mjs';
 import {canonicalProjectPath} from './project-path.mjs';
 
-const {values}=parseArgs({options:{dir:{type:'string',default:defaultDataDir()},tool:{type:'string',default:'claude'},'spawn-script':{type:'string'}},strict:true});
+const {values}=parseArgs({options:{dir:{type:'string',default:defaultDataDir()},tool:{type:'string',default:'claude'},'spawn-script':{type:'string'},'claude-spawn-script':{type:'string'}},strict:true});
 const dir=resolve(values.dir),sessions=new Map(),requests=new Map(),active=new Map();
 const projectPath=(()=>{try{return canonicalProjectPath(process.cwd());}catch{return null;}})();
 const projectTitle=projectPath?projectPath.split(/[\\/]/).filter(Boolean).at(-1)||'Project':'Project';
@@ -27,7 +27,7 @@ const definitions=[
  ['bridge_consult','Automatically start a read-only managed consultation with another local AI tool when a module it owns needs verification. Returns immediately with consultId; continue the current task and use bridge_consult_result later. The saved project binding chooses the target project, so the caller does not know or pass it. This starts an isolated Worker, never wakes or joins the target original chat, and never modifies files.',{sessionId:str,tool:str,text:str,waitMs:consultWait},['tool','text']],
  ['bridge_consult_result','Retrieve a managed consultation result into the SAME asking chat. Does not start another consultation.',{sessionId:str,consultId:str,waitMs:wait},['consultId']],
  ['bridge_consult_stop','Stop only this managed read-only consultation Worker. It does not interrupt the asking chat or any target original chat.',{sessionId:str,consultId:str},['consultId']],
- ['bridge_spawn','Open a new Codex app-server chat in this MCP process’s project and optionally run one prompt. Without keepAlive the chat runs one turn and closes; with keepAlive (or no prompt) keep spawnId for bridge_spawn_turn and close it with bridge_spawn_close. The new chat registers itself with AI Bridge. Interactive approvals are impossible: sandbox is read-only or workspace-write only and the approval policy is always never.',{prompt:str,sandbox:str,effort:str,timeoutMs:{type:'integer',minimum:1000,maximum:600000},keepAlive:flag},[]],
+ ['bridge_spawn','Open a new worker chat (Codex app-server by default, or Claude) in this MCP process’s project and optionally run one prompt. Without keepAlive the chat runs one turn and closes; with keepAlive (or no prompt) keep spawnId for bridge_spawn_turn and close it with bridge_spawn_close. The new chat registers itself with AI Bridge. Interactive approvals are impossible: sandbox is read-only or workspace-write only and the approval policy is always never.',{tool:str,prompt:str,sandbox:str,effort:str,timeoutMs:{type:'integer',minimum:1000,maximum:600000},keepAlive:flag},[]],
  ['bridge_spawn_turn','Run one more turn in a live chat started by bridge_spawn. The chat keeps its original Codex context; turns never overlap.',{spawnId:str,prompt:str,timeoutMs:{type:'integer',minimum:1000,maximum:600000}},['spawnId','prompt']],
  ['bridge_spawn_close','Close a chat started by bridge_spawn, releasing its app-server process and its automatic native session.',{spawnId:str},['spawnId']],
  ['bridge_close_session','Stop sharing this conversation. Pending questions become unavailable; no CLI fallback.',{sessionId:str},[]]
@@ -55,8 +55,11 @@ async function peer(id){
 }
 const pause=(ms,signal)=>new Promise((resolve,reject)=>{const timer=setTimeout(done,ms);function done(){signal?.removeEventListener('abort',abort);resolve();}function abort(){clearTimeout(timer);reject(Error('Cancelled; inspect existing question before retrying'));}if(signal?.aborted)return abort();signal?.addEventListener('abort',abort,{once:true});});
 const spawnScript=values['spawn-script']?resolve(values['spawn-script']):fileURLToPath(new URL('./scripts/spawn-codex-chat.mjs',import.meta.url));
+const claudeSpawnScript=values['claude-spawn-script']?resolve(values['claude-spawn-script']):fileURLToPath(new URL('./scripts/spawn-claude-chat.mjs',import.meta.url));
 const spawns=new Map(),SPAWN_MAX=4,SPAWN_TIMEOUT=180000;
 function spawnSettings(args){
+ const tool=args.tool??'codex';
+ if(!['codex','claude'].includes(tool))throw Error('tool must be codex or claude');
  const sandbox=args.sandbox??'read-only';
  if(!['read-only','workspace-write'].includes(sandbox))throw Error('sandbox must be read-only or workspace-write');
  const effort=args.effort??'high';
@@ -64,11 +67,11 @@ function spawnSettings(args){
  const timeoutMs=args.timeoutMs??SPAWN_TIMEOUT;
  if(!Number.isInteger(timeoutMs)||timeoutMs<1000||timeoutMs>600000)throw Error('timeoutMs must be 1000..600000');
  if(args.keepAlive!==undefined&&typeof args.keepAlive!=='boolean')throw Error('keepAlive must be a boolean');
- return {sandbox,effort,timeoutMs};
+ return {tool,sandbox,effort,timeoutMs};
 }
-function startSpawn({project,sandbox,effort,timeoutMs}){
+function startSpawn({project,tool,sandbox,effort,timeoutMs}){
  return new Promise((resolveStart,rejectStart)=>{
-  const child=spawn(process.execPath,[spawnScript,'--rpc','--dir',dir,'--project',project,'--sandbox',sandbox,'--effort',effort,'--timeout-ms',String(timeoutMs)],{cwd:project,stdio:['pipe','pipe','pipe'],windowsHide:true});
+  const child=spawn(process.execPath,[tool==='claude'?claudeSpawnScript:spawnScript,'--rpc','--dir',dir,'--project',project,'--sandbox',sandbox,'--effort',effort,'--timeout-ms',String(timeoutMs)],{cwd:project,stdio:['pipe','pipe','pipe'],windowsHide:true});
   const record={child,threadId:null,sessionId:null,cwd:project,serial:0,turn:null,timer:null,closed:false,stderr:''};
   let started=false;
   const finishStart=error=>{if(started)return;started=true;clearTimeout(startupTimer);try{child.kill('SIGKILL');}catch{}rejectStart(error);};
@@ -156,7 +159,7 @@ async function tool(name,args,signal){
   const settings=spawnSettings(args),keepAlive=args.keepAlive===true,prompt=args.prompt?.trim();
   if(!prompt&&!keepAlive)throw Error('prompt is required unless keepAlive is true');
   const record=await startSpawn({project:projectPath??resolve(process.cwd()),...settings});
-  const base={spawnId:record.threadId,threadId:record.threadId,sessionId:record.sessionId,cwd:record.cwd,sandbox:settings.sandbox,effort:settings.effort};
+  const base={spawnId:record.threadId,threadId:record.threadId,sessionId:record.sessionId,cwd:record.cwd,tool:settings.tool,sandbox:settings.sandbox,effort:settings.effort};
   if(prompt){
    try{
     const value=await spawnTurn(record,prompt,settings.timeoutMs);

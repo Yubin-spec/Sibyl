@@ -111,3 +111,22 @@ test('closing the MCP process closes live spawned chats',async()=>{
   assert.equal(dead,true,'spawned child survived the MCP process');
  }finally{await c.close();await cleanup();}
 });
+
+test('bridge_spawn routes to the Claude worker when tool is claude',async()=>{
+ const {dir,project,fakePath,inbox,cleanup}=await fixture();
+ const c=client(dir,'claude',project,['--claude-spawn-script',fakePath]);
+ try{
+  const result=await c.tool('bridge_spawn',{tool:'claude',prompt:'hello',sandbox:'workspace-write'});
+  assert.equal(result.tool,'claude');
+  assert.equal(result.sandbox,'workspace-write');
+  assert.match(result.text,/echo:hello/);
+ }finally{await c.close();await cleanup();}
+});
+
+test('bridge_spawn rejects an unknown tool before starting anything',async()=>{
+ const {dir,project,fakePath,inbox,cleanup}=await fixture();
+ const c=client(dir,'claude',project,['--claude-spawn-script',fakePath]);
+ try{
+  await assert.rejects(c.tool('bridge_spawn',{tool:'cursor',prompt:'x'}),/tool must be codex or claude/);
+ }finally{await c.close();await cleanup();}
+});
