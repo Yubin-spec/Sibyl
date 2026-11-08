@@ -53,6 +53,7 @@ export function createPlanReviewService({
   let closed = false;
 
   for (const record of store.listPlanReviews?.() ?? []) records.set(record.id, record);
+  config = normalizeReviewConfig(config);
 
   const save = record => {
     record.updatedAt = iso(now());

@@ -406,6 +406,14 @@ export function normalizeReviewConfig(value = {}) {
   const strings = ['reviewerModel', 'reviewerFinalModel', 'reviewerEffort'];
   const out = {...DEFAULT_PLAN_REVIEW};
   for (const [key, next] of Object.entries(value)) {
+    if (key === 'protocolVersion') {
+      if (next !== PROTOCOL_VERSION) throw Error('Unsupported protocolVersion');
+      continue;
+    }
+    if (key === 'hashVersion') {
+      if (next !== HASH_VERSION) throw Error('Unsupported hashVersion');
+      continue;
+    }
     if (numeric.includes(key)) {
       if (!Number.isInteger(next) || next < 1) throw Error('Invalid ' + key);
       out[key] = next;
