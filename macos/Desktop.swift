@@ -3,10 +3,28 @@
 import Cocoa
 import WebKit
 
+// 后台写入的 UI 运行描述。
+// appPid 只用于判断描述是否仍归属于一个存活的 App；旧版本或 CLI 启动时可能没有该字段。
+private struct RuntimeDescriptor: Decodable {
+    let pid: Int32
+    let appPid: Int32?
+    let url: String
+    let token: String
+    let version: String
+}
+
+// 健康检查只允许停留在本机地址，避免自定义 CSRF 头被 HTTP 重定向带到外部站点。
+private final class LocalOnlySessionDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
 final class BridgeApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler, NSWindowDelegate {
     private var window: NSWindow?
     private var web: WKWebView?
     private var backend: Process?
+    private var adoptedBackendPID: pid_t?
     private var statusItem: NSStatusItem?
     private var closeToTray = UserDefaults.standard.object(forKey: "closeToTray") as? Bool ?? true
     private var lastError: String?
@@ -92,18 +110,171 @@ final class BridgeApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         return true
     }
 
-    // 启动内置 Node 控制面。
-    // 用登录 shell 启动 src/app/control.mjs，保留用户已有的 CLI 登录环境；读取 stdout 里的随机端口。
+    // 启动或接管内置 Node 控制面。
+    // 先读取上次留下的运行描述；同版本且健康时直接复用，避免 App 重启或崩溃后产生第二个后台。
     private func startBackend() {
         guard let resources = Bundle.main.resourceURL else { return }
         // 数据目录继续使用旧名 AI Bridge，确保改名后仍能读到旧版本历史与配对凭证。
         let dataDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/AI Bridge")
         do { try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true) }
         catch { showError(error.localizedDescription); return }
+
+        guard let runtime = readRuntimeDescriptor(dataDir) else {
+            launchBackend(resources: resources, dataDir: dataDir)
+            return
+        }
+
+        // 只有格式正确、版本一致的本机地址才值得发起健康检查。
+        if runtime.version == appVersion, let url = localBackendURL(runtime.url) {
+            checkBackend(runtime, url: url) { [weak self] healthy in
+                DispatchQueue.main.async {
+                    guard let self = self, !self.shuttingDown else { return }
+                    if healthy { self.adoptBackend(runtime, url: url) }
+                    else { self.replaceBackend(runtime, resources: resources, dataDir: dataDir) }
+                }
+            }
+            return
+        }
+
+        replaceBackend(runtime, resources: resources, dataDir: dataDir)
+    }
+
+    // 当前 App 的版本号。
+    // 必须与后台描述一致，防止新版外壳误连到旧版控制面而缺少新接口。
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    }
+
+    // 读取 ui-runtime.json。
+    // 文件不存在表示首次启动；JSON 损坏时删除它，随后按正常流程启动新后台。
+    private func readRuntimeDescriptor(_ dataDir: URL) -> RuntimeDescriptor? {
+        let file = dataDir.appendingPathComponent("ui-runtime.json")
+        guard let data = try? Data(contentsOf: file) else { return nil }
+        do { return try JSONDecoder().decode(RuntimeDescriptor.self, from: data) }
+        catch {
+            try? FileManager.default.removeItem(at: file)
+            return nil
+        }
+    }
+
+    // 校验运行描述里的地址。
+    // 只接受 127.0.0.1 的 HTTP 随机端口，且不允许用户名、查询参数或片段。
+    private func localBackendURL(_ value: String) -> URL? {
+        guard let url = URL(string: value), url.scheme == "http", url.host == "127.0.0.1",
+              let port = url.port, (1...65535).contains(port), url.user == nil, url.password == nil,
+              (url.path.isEmpty || url.path == "/"), url.query == nil, url.fragment == nil else { return nil }
+        return url
+    }
+
+    // 请求 /api/version 验证后台确实可用。
+    // 成功条件同时包括 HTTP 200、返回地址仍在本机、版本完全一致，避免只凭 PID 或端口猜测。
+    private func checkBackend(_ runtime: RuntimeDescriptor, url: URL, completion: @escaping (Bool) -> Void) {
+        var request = URLRequest(url: url.appendingPathComponent("api/version"))
+        request.timeoutInterval = 2
+        request.setValue(runtime.token, forHTTPHeaderField: "x-bridge-ui")
+        request.setValue("application/json", forHTTPHeaderField: "accept")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 2
+        configuration.timeoutIntervalForResource = 3
+        configuration.httpShouldSetCookies = false
+        let session = URLSession(configuration: configuration, delegate: LocalOnlySessionDelegate(), delegateQueue: nil)
+        session.dataTask(with: request) { data, response, error in
+            defer { session.invalidateAndCancel() }
+            guard error == nil, let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  http.url?.host == "127.0.0.1", http.url?.port == url.port, let data = data,
+                  let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  body["version"] as? String == runtime.version else {
+                completion(false)
+                return
+            }
+            completion(true)
+        }.resume()
+    }
+
+    // 复用已有后台。
+    // 如果描述归属的 App 已经退出，就把后台记为本 App 接管；正常退出时一并清理。
+    private func adoptBackend(_ runtime: RuntimeDescriptor, url: URL) {
+        adoptedBackendPID = runtime.appPid.map(processExists) == true ? nil : pid_t(runtime.pid)
+        loaded = true
+        allowedURL = url
+        appendDiagnostics("Adopted running backend (PID \(runtime.pid))\n")
+        web?.load(URLRequest(url: url))
+    }
+
+    // 判断 PID 是否仍存在。
+    // signal 0 只做权限和存在性检查，不会终止进程。
+    private func processExists(_ pid: pid_t) -> Bool {
+        pid > 0 && kill(pid, 0) == 0
+    }
+
+    // 确认 PID 确实是本项目目录下的控制面 Node。
+    // 终止前必须过这一关，避免运行描述被篡改后误杀 Codex、Claude、Cursor 或 DeepSeek。
+    private func bridgeProcessMatches(_ pid: pid_t, dataDir: URL) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-p", String(pid), "-ww", "-o", "command="]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0,
+                  let data = try output.fileHandleForReading.readToEnd(),
+                  let command = String(data: data, encoding: .utf8) else { return false }
+            return command.contains("src/app/control.mjs") && command.contains(dataDir.path)
+        } catch { return false }
+    }
+
+    // 处理不健康、旧版本或失联的运行描述。
+    // 只有确认是旧版遗留后台时才终止；仍被另一个存活 App 使用时只提示，不抢也不杀。
+    private func replaceBackend(_ runtime: RuntimeDescriptor, resources: URL, dataDir: URL) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let ownsBridge = self.bridgeProcessMatches(pid_t(runtime.pid), dataDir: dataDir)
+            let ownerAlive = runtime.appPid.map(self.processExists) ?? false
+            if ownsBridge && ownerAlive {
+                DispatchQueue.main.async {
+                    self.showError("检测到一个仍在运行的 Agents Calling 后台，但版本或状态不匹配。请先退出旧窗口，再重新打开应用。")
+                }
+                return
+            }
+            guard ownsBridge else {
+                try? FileManager.default.removeItem(at: dataDir.appendingPathComponent("ui-runtime.json"))
+                DispatchQueue.main.async { self.launchBackend(resources: resources, dataDir: dataDir) }
+                return
+            }
+            self.terminateOrphan(pid_t(runtime.pid), dataDir: dataDir) {
+                DispatchQueue.main.async { self.launchBackend(resources: resources, dataDir: dataDir) }
+            }
+        }
+    }
+
+    // 优雅终止失联后台，超时后强制结束。
+    // 每次发信号前都重新确认进程身份，清理范围仅限当前数据目录的控制面。
+    private func terminateOrphan(_ pid: pid_t, dataDir: URL, completion: @escaping () -> Void) {
+        kill(pid, SIGTERM)
+        let deadline = Date().addingTimeInterval(2)
+        func waitForExit() {
+            if !processExists(pid) || Date() >= deadline {
+                if processExists(pid) && bridgeProcessMatches(pid, dataDir: dataDir) { kill(pid, SIGKILL) }
+                try? FileManager.default.removeItem(at: dataDir.appendingPathComponent("ui-runtime.json"))
+                completion()
+                return
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { waitForExit() }
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { waitForExit() }
+    }
+
+    // 用登录 shell 启动 src/app/control.mjs。
+    // 保留用户已有的 CLI 登录环境；读取 stdout 里的随机端口，并把自己的 PID 交给后台记录。
+    private func launchBackend(resources: URL, dataDir: URL) {
+        adoptedBackendPID = nil
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         // Preserve CLI authentication configured in the user's login shell. Paths remain argv values.
-        process.arguments = ["-lic", "exec \"$@\"", "ai-bridge", resources.appendingPathComponent("node").path, resources.appendingPathComponent("src/app/control.mjs").path, dataDir.path]
+        process.arguments = ["-lic", "exec \"$@\"", "ai-bridge", resources.appendingPathComponent("node").path, resources.appendingPathComponent("src/app/control.mjs").path, dataDir.path, String(ProcessInfo.processInfo.processIdentifier)]
         var environment = ProcessInfo.processInfo.environment
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         environment["PATH"] = "\(resources.path):\(home)/.local/bin:\(home)/.claude/local:\(home)/.cursor/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -216,6 +387,7 @@ final class BridgeApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
 
     // 应用退出清理。
     // 标记 shuttingDown 并终止后台 Node 进程。
+    // 本 App 启动的后台走 Process；从失联 App 接管的后台按 PID 做同样的优雅退出。
     func applicationWillTerminate(_ notification: Notification) {
         shuttingDown = true
         web?.configuration.userContentController.removeScriptMessageHandler(forName: "bridge")
@@ -224,6 +396,12 @@ final class BridgeApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
             let deadline = Date().addingTimeInterval(2)
             while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
             if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        } else if let pid = adoptedBackendPID, processExists(pid) {
+            kill(pid, SIGTERM)
+            let deadline = Date().addingTimeInterval(2)
+            while processExists(pid) && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+            if processExists(pid) { kill(pid, SIGKILL) }
+            try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/AI Bridge/ui-runtime.json"))
         }
     }
 }

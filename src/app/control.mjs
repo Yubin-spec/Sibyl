@@ -1983,15 +1983,58 @@ if (
   const dir =
     process.argv[2] ||
     join(process.env.HOME, "Library", "Application Support", "AI Bridge");
+  // Swift 外壳会传入自己的 PID；CLI 直接启动时没有这个参数。
+  // 这个归属信息让下一次启动能区分“仍在使用的后台”和“App 崩溃后遗留的后台”。
+  const appPid = Number(process.argv[3]) || null;
+  const runtimeFile = join(dir, "ui-runtime.json");
+  const runtimeNonce = randomUUID();
   const control = await createControl({ dir });
-  control.server.listen(0, "127.0.0.1", () =>
-    console.log(
-      `BRIDGE_UI_READY=http://127.0.0.1:${control.server.address().port}`,
-    ),
-  );
+
+  /**
+   * 删除本进程写下的 UI 运行描述。
+   *
+   * 只有 nonce 匹配时才删除，避免误删后来接管的后台描述；
+   * 正常退出和收到 SIGINT/SIGTERM 时都会调用。
+   */
+  const clearRuntime = async () => {
+    try {
+      const owner = JSON.parse(await readFile(runtimeFile, "utf8"));
+      if (owner.nonce === runtimeNonce) await rm(runtimeFile, { force: true });
+    } catch {}
+  };
+
+  control.server.listen(0, "127.0.0.1", async () => {
+    const url = `http://127.0.0.1:${control.server.address().port}`;
+
+    // 运行描述只给同用户的本机 App 读取：端口、CSRF、PID 和版本。
+    try {
+      await writeFile(
+        runtimeFile,
+        JSON.stringify({
+          pid: process.pid,
+          appPid,
+          url,
+          token: control.csrf,
+          nonce: runtimeNonce,
+          version,
+          startedAt: new Date().toISOString(),
+        }),
+        { mode: 0o600 },
+      );
+    } catch (error) {
+      // 描述写失败不影响当前启动，App 仍可通过 stdout 标记加载界面。
+      console.error("Cannot write UI runtime descriptor:", error.message);
+    }
+    console.log(`BRIDGE_UI_READY=${url}`);
+  });
+
   for (const signal of ["SIGINT", "SIGTERM"])
     process.once(signal, async () => {
-      await control.close();
-      process.exit(0);
+      try {
+        await control.close();
+      } finally {
+        await clearRuntime();
+        process.exit(0);
+      }
     });
 }
