@@ -171,3 +171,19 @@ test('saving many ended workers never evicts a live one',async()=>{
     ws.close();
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('plan reviews keep active approvals while terminal history is capped',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'workspace-plan-review-')),dir=join(root,'data');
+  const ws=await openWorkspace(dir);
+  try{
+    ws.savePlanReview({id:'r0',status:'failed',createdAt:'2026-01-01T00:00:00.000Z'});
+    ws.savePlanApproval({projectId:'/p',planPath:'a.md',reviewId:'r0',planHash:'h',hashVersion:1,status:'approved'});
+    for(let i=1;i<=101;i++)ws.savePlanReview({id:'r'+i,status:'failed',createdAt:new Date(1000+i).toISOString()});
+    const reviews=ws.listPlanReviews();
+    assert.ok(reviews.some(item=>item.id==='r0'));
+    assert.ok(reviews.length<=102);
+    assert.equal(ws.getPlanApproval('/p','a.md').reviewId,'r0');
+    ws.deletePlanApproval('/p','a.md');
+    assert.equal(ws.getPlanApproval('/p','a.md'),null);
+  }finally{ws.close();await rm(root,{recursive:true,force:true});}
+});

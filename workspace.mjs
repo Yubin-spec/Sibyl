@@ -65,6 +65,8 @@ export async function openWorkspace(dir) {
       db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('bindings',JSON.stringify([]));
       db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('consultations',JSON.stringify([]));
       db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('workers',JSON.stringify([]));
+      db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('planReviews',JSON.stringify([]));
+      db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('planApprovals',JSON.stringify({}));
       for (const row of db.prepare('SELECT id,data FROM conversations').all()) {
         const record=JSON.parse(row.data);
         if(record.status==='running') {record.status='failed';record.updatedAt=now();db.prepare('UPDATE conversations SET data=? WHERE id=?').run(JSON.stringify(record),row.id);}
@@ -161,6 +163,34 @@ export async function openWorkspace(dir) {
     getConversation(id) {return get('conversations',id);},
     listConsultations() {return meta('consultations');},
     listWorkers() {return meta('workers');},
+    listPlanReviews() {return meta('planReviews');},
+    savePlanReview(record) {return transaction(()=>{
+      const id=text(record.id,'id');
+      const value={...record,id,updatedAt:now()};
+      const records=meta('planReviews').filter(item=>item.id!==id);
+      records.push(value);
+      records.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
+      const active=new Set(Object.values(meta('planApprovals')).map(item=>item?.reviewId).filter(Boolean));
+      let terminal=0;
+      putMeta('planReviews',records.filter(item=>!['approved','rejected','cancelled','failed'].includes(item.status)||active.has(item.id)||terminal++<100));
+      return value;
+    });},
+    getPlanApproval(projectId,planPath) {
+      const key=text(projectId,'projectId')+'\0'+text(planPath,'planPath');
+      return meta('planApprovals')[key]??null;
+    },
+    savePlanApproval(input) {return transaction(()=>{
+      const reviewId=text(input.reviewId,'reviewId'),planHash=text(input.planHash,'planHash'),projectId=text(input.projectId,'projectId'),planPath=text(input.planPath,'planPath');
+      if(!Number.isInteger(input.hashVersion)||input.hashVersion<1)throw new Error('Invalid hashVersion');
+      const approvals={...meta('planApprovals')};
+      const key=projectId+'\0'+planPath;
+      approvals[key]={projectId,planPath,reviewId,planHash,hashVersion:input.hashVersion,status:text(input.status,'status'),approvedAt:input.approvedAt??now()};
+      putMeta('planApprovals',approvals);return approvals[key];
+    });},
+    deletePlanApproval(projectId,planPath) {return transaction(()=>{
+      const key=text(projectId,'projectId')+'\0'+text(planPath,'planPath');
+      const approvals={...meta('planApprovals')};delete approvals[key];putMeta('planApprovals',approvals);return {ok:true};
+    });},
     saveWorker(record) {return transaction(()=>{
       const id=text(record.id,'id');
       const value={...record,id,updatedAt:now()};
