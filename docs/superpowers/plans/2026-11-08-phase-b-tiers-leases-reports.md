@@ -1690,8 +1690,8 @@ test('a deliverable patch applies over dirty files, including the worker file',a
     const done=await wait(async()=>{const r=await c.tool('bridge_worker_result',{workerId:started.workerId,waitMs:1000});return r.status==='completed'?r:null;});
     assert.ok(done.report.deliverable.path);
     git(f.project,'apply',done.report.deliverable.path);
-    assert.equal(await readFile(join(f.project,'src','a.txt'),'utf8'),'worker\n');
-    assert.equal(await readFile(join(f.project,'docs','lead.txt'),'utf8'),'lead dirty\n');
+    assert.equal((await readFile(join(f.project,'src','a.txt'),'utf8')).replace(/\r\n/g,'\n'),'worker\n');
+    assert.equal((await readFile(join(f.project,'docs','lead.txt'),'utf8')).replace(/\r\n/g,'\n'),'lead dirty\n');
   }finally{await c.close();await f.close();}
 });
 
