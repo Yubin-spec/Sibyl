@@ -27,3 +27,4 @@
 .env
 .env.*
 !.env.example
+/.notify.json
