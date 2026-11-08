@@ -49,6 +49,14 @@ final class BridgeApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         }
         editItem.title = "编辑"; editItem.submenu = editMenu; menu.addItem(editItem)
         NSApp.mainMenu = menu
+
+        // 显式设置 Dock 与 App 切换器图标。
+        // LaunchServices 可能按 bundle id 复用旧版本的图标缓存，因此这里直接读取当前包内资源。
+        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: iconURL) {
+            NSApp.applicationIconImage = icon
+        }
+
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "Agents Calling"
         let trayMenu = NSMenu()
