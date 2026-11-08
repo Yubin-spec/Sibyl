@@ -2,8 +2,9 @@ import http from 'node:http';
 import {mkdir,readFile,writeFile,rename,rm,open} from 'node:fs/promises';
 import {join,basename} from 'node:path';
 import {randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
-import {projectKey} from './project-path.mjs';
 import {listenLoopback} from './runtime.mjs';
+import {projectKey} from './project-path.mjs';
+const PLAN_REVIEW_PROTOCOL='plan-review/v1';
 
 const validId=v=>typeof v==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(v);
 const workerId=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(v);
@@ -34,7 +35,7 @@ export async function openNativeInbox(options){
   const release=async()=>{const owner=JSON.parse(await readFile(lock,'utf8').catch(()=>'{}'));if(owner.nonce===nonce)await rm(lock,{force:true});};
   try{return await createNativeInbox({...options,release});}catch(e){await release();throw e;}
 }
-async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consult,consultResult,consultStop,resolveProject,autoBind,worker={}}){
+async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consult,consultResult,consultStop,resolveProject,autoBind,worker={},planReview={}}){
   await mkdir(dir,{recursive:true,mode:0o700});
   const file=join(dir,'native-questions.json'),runtimeFile=join(dir,'native-runtime.json');
   let questions=[];try{questions=JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
@@ -85,6 +86,12 @@ async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consu
         const list=[...sessions.values()].filter(item=>!scoped||item.projectKey===key).map(publicSession);
         return send(200,{sessions:list,scope:scoped?'project':'all'});
       }
+      if(req.url==='/plan-review/check'){
+        if(body.protocol!==PLAN_REVIEW_PROTOCOL)throw Error('Unsupported plan review protocol');
+        if(typeof planReview.check!=='function')throw Error('Plan review is unavailable');
+        if(!text(body.projectPath,1024)||body.filePath!==undefined&&!text(body.filePath,1024)||body.mode!==undefined&&!['ask','warn'].includes(body.mode))throw Error('Invalid plan review check');
+        return send(200,await planReview.check({projectPath:body.projectPath,filePath:body.filePath,mode:body.mode}));
+      }
       const s=own(body);
       // Local callers authenticate their session lease; never accept a self-reported source.
       if(req.url==='/worker/start'){
@@ -130,6 +137,40 @@ async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consu
         if(!workerPaths(body.paths))throw Error('Invalid worker request');
         if(typeof worker.check!=='function')throw Error('Worker service is unavailable');
         return send(200,await worker.check({session:{...publicSession(s),projectPath:s.projectPath},paths:body.paths}));
+      }
+      if(req.url.startsWith('/plan-review/')){
+        if(body.protocol!==PLAN_REVIEW_PROTOCOL)throw Error('Unsupported plan review protocol');
+        const session={...publicSession(s),projectPath:s.projectPath};
+        if(req.url==='/plan-review/start'){
+          if(!text(body.planPath,1024)||typeof planReview.start!=='function')throw Error('Invalid plan review start');
+          const value=await planReview.start({session,planPath:body.planPath});
+          return send(value.reviewId?202:200,value);
+        }
+        if(req.url==='/plan-review/result'){
+          if(!validId(body.reviewId)||!Number.isInteger(body.waitMs??0)||(body.waitMs??0)<0||(body.waitMs??0)>25000)throw Error('Invalid plan review result');
+          return send(200,await planReview.result({session,reviewId:body.reviewId,waitMs:body.waitMs??0}));
+        }
+        if(req.url==='/plan-review/respond'){
+          if(!validId(body.reviewId)||!Array.isArray(body.responses)||body.responses.length<1||body.responses.length>20||Buffer.byteLength(JSON.stringify(body.responses))>12000||!Number.isInteger(body.expectedRound)||body.expectedRound<1||!text(body.requestId,200)||body.planPath!==undefined&&!text(body.planPath,1024))throw Error('Invalid plan review responses');
+          return send(200,await planReview.respond({session,reviewId:body.reviewId,responses:body.responses,planPath:body.planPath,expectedRound:body.expectedRound,requestId:body.requestId}));
+        }
+        if(req.url==='/plan-review/decide'){
+          if(!validId(body.reviewId)||!['1','0'].includes(String(body.choice)))throw Error('Invalid plan review decision');
+          return send(200,await planReview.decide({session,reviewId:body.reviewId,choice:String(body.choice)}));
+        }
+        if(req.url==='/plan-review/continue'){
+          if(!validId(body.reviewId)||body.confirmVisibility!==true)throw Error('Visibility confirmation is required');
+          return send(200,await planReview.continueReview({session,reviewId:body.reviewId,confirmVisibility:true}));
+        }
+        if(req.url==='/plan-review/recover'){
+          if(!validId(body.reviewId)||body.takeover!==undefined&&typeof body.takeover!=='boolean')throw Error('Invalid plan review recovery');
+          return send(200,await planReview.recover({session,reviewId:body.reviewId,takeover:body.takeover}));
+        }
+        if(req.url==='/plan-review/list'){
+          if(body.all!==undefined&&typeof body.all!=='boolean')throw Error('Invalid plan review list');
+          return send(200,{reviews:await planReview.list({session,all:body.all??false})});
+        }
+        throw Error('Plan review is unavailable');
       }
       if(req.url==='/ask'){
         let targetSessionId=body.targetSessionId;

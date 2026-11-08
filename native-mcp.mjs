@@ -8,6 +8,7 @@ import {makeClient} from './bridge.mjs';
 import {canonicalProjectPath} from './project-path.mjs';
 
 const {values}=parseArgs({options:{dir:{type:'string',default:defaultDataDir()},tool:{type:'string',default:'claude'}},strict:true});
+const PLAN_REVIEW_PROTOCOL='plan-review/v1';
 const dir=resolve(values.dir),sessions=new Map(),requests=new Map(),active=new Map();
 const projectPath=(()=>{try{return canonicalProjectPath(process.cwd());}catch{return null;}})();
 const projectTitle=projectPath?projectPath.split(/[\\/]/).filter(Boolean).at(-1)||'Project':'Project';
@@ -35,6 +36,13 @@ const definitions=[
  ['bridge_worker_accept','Record the lead acceptance decision for a finished worker. The lead verifies and integrates the result.',{workerId,accepted:flag,note:{...str,minLength:0,maxLength:2000}},['workerId','accepted']],
  ['bridge_worker_list','List this session’s workers, or pass all:true to include all daemon worker records.',{all:flag},[]],
  ['bridge_lease_check','Check paths against worker leases and shared-file rules before editing. Returns allowed, blocked, shared and invalid.',{paths},['paths']],
+ ['bridge_plan_review','Start a read-only Codex review of a structural plan. Returns a reviewId immediately; the review may wait for visibility confirmation. Use bridge_plan_review_result to read the verdict.',{planPath:{...str,maxLength:1024}},['planPath']],
+ ['bridge_plan_review_result','Read an existing plan review without resubmitting.',{reviewId:str,waitMs:wait},['reviewId']],
+ ['bridge_plan_review_respond','Answer every unresolved blocker/major issue and question for the current round. responses is a JSON string.',{reviewId:str,responses:{...str,maxLength:12000},expectedRound:{type:'integer',minimum:1,maximum:100},requestId:{...str,maxLength:200},planPath:{...str,maxLength:1024}},['reviewId','responses','expectedRound','requestId']],
+ ['bridge_plan_review_decide','Resolve a deadlock: 1 starts the one-shot final review round, 0 cancels.',{reviewId:str,choice:{...str,enum:['1','0']}},['reviewId','choice']],
+ ['bridge_plan_review_continue','Confirm that the review thread is visible, then send its pending turn.',{reviewId:str,confirmVisibility:flag},['reviewId','confirmVisibility']],
+ ['bridge_plan_review_recover','Recover an interrupted review. takeover is only for another Claude session in the same project.',{reviewId:str,takeover:flag},['reviewId']],
+ ['bridge_plan_review_list','List plan reviews for this session, or all reviews.',{all:flag},[]],
  ['bridge_close_session','Stop sharing this conversation. Pending questions become unavailable; no CLI fallback.',{sessionId:str},[]]
 ].map(([name,description,properties,required])=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}}));
 const own=id=>{const s=sessions.get(id);if(!s)throw Error('Session does not belong to this MCP connection; register this conversation first');return s;};
@@ -141,6 +149,13 @@ async function tool(name,args,signal){
  if(name==='bridge_worker_accept')return local('/worker/accept',{...identity,...args},signal);
  if(name==='bridge_worker_list')return local('/worker/list',{...identity,...args},signal);
  if(name==='bridge_lease_check')return local('/lease/check',{...identity,...args},signal);
+ if(name==='bridge_plan_review')return local('/plan-review/start',{...identity,protocol:PLAN_REVIEW_PROTOCOL,planPath:args.planPath},signal);
+ if(name==='bridge_plan_review_result')return local('/plan-review/result',{...identity,protocol:PLAN_REVIEW_PROTOCOL,reviewId:args.reviewId,waitMs:duration(args.waitMs)},signal);
+ if(name==='bridge_plan_review_respond'){let responses;try{responses=JSON.parse(args.responses);}catch{throw Error('responses must be valid JSON');}return local('/plan-review/respond',{...identity,protocol:PLAN_REVIEW_PROTOCOL,reviewId:args.reviewId,responses,planPath:args.planPath,expectedRound:args.expectedRound,requestId:args.requestId},signal);}
+ if(name==='bridge_plan_review_decide')return local('/plan-review/decide',{...identity,protocol:PLAN_REVIEW_PROTOCOL,reviewId:args.reviewId,choice:args.choice},signal);
+ if(name==='bridge_plan_review_continue'){if(args.confirmVisibility!==true)throw Error('confirmVisibility must be true');return local('/plan-review/continue',{...identity,protocol:PLAN_REVIEW_PROTOCOL,reviewId:args.reviewId,confirmVisibility:true},signal);}
+ if(name==='bridge_plan_review_recover')return local('/plan-review/recover',{...identity,protocol:PLAN_REVIEW_PROTOCOL,reviewId:args.reviewId,takeover:args.takeover},signal);
+ if(name==='bridge_plan_review_list')return local('/plan-review/list',{...identity,protocol:PLAN_REVIEW_PROTOCOL,all:args.all??false},signal);
  if(name==='bridge_receive')return local('/receive',{...identity,waitMs:duration(args.waitMs)},signal);
  if(name==='bridge_reply')return local('/reply',{...identity,questionId:args.questionId,peerId:args.peerId,text:args.text},signal);
  if(name==='bridge_consult'){const started=await local('/consult',{...identity,tool:args.tool,text:args.text},signal);if(args.waitMs===undefined)return {...started,notice:'Consultation started in the background. Keep consultId; do not resubmit. Use bridge_consult_result when you need the answer.'};return consultAnswer(session,started.consultId,duration(args.waitMs),signal);}
