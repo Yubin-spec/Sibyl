@@ -1169,12 +1169,13 @@ test('an unconfirmed exit keeps its lease until close confirms the tree is gone'
   try{
     const record={id:'old',sourceSessionId:'s1',status:'orphan',stopReason:'exit-unconfirmed',childPid:process.pid,projectPath:f.project,repositoryKey:projectKey(f.project),scope:['src'],startedAt:new Date().toISOString()};
     const store={listWorkers:()=>[record],saveWorker:()=>{}};
-    const service=createWorkerService({dataDir:f.dataDir,store,scripts:{codex:'x'},isAlive:()=>false,killTree:async()=>true});
+    const service=createWorkerService({dataDir:f.dataDir,store,scripts:{codex:f.script,claude:f.script},isAlive:()=>false,killTree:async()=>true});
     await assert.rejects(service.start({session:{id:'s1',projectPath:f.project},tool:'codex',tier:'parallel',scope:['src']}),/路径租约冲突/);
     const closed=await service.close({session:{id:'s1'},workerId:'old'});
     assert.equal(closed.status,'interrupted');
     const allowed=await service.start({session:{id:'s1',projectPath:f.project},tool:'codex',tier:'parallel',scope:['src']});
     assert.ok(allowed.workerId);
+    await service.close({session:{id:'s1'},workerId:allowed.workerId});
     service.stop();
   }finally{await f.cleanup();}
 });

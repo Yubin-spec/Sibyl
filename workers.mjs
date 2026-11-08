@@ -148,7 +148,7 @@ export function createWorkerService({
     const promise = new Promise((resolveTurn, rejectTurn) => {
       record.turn = {id, resolve: resolveTurn, reject: rejectTurn};
     });
-    record.lastTurnPromise = promise;
+    record.lastTurnPromise = promise.catch(() => {});
     const timer = setTimeout(() => {
       if (record.turn?.id !== id) return;
       const turn = record.turn;
@@ -306,6 +306,10 @@ export function createWorkerService({
           });
           if (record.leadDigest) {
             const after = await scopeFingerprint(record.projectPath, record.scope);
+            if (after.truncated) {
+              report.reviewReasons.push('主导方改动指纹被截断，验收需人工确认');
+              report.needsReview = true;
+            }
             const changes = fingerprintChanges(record.leadDigest, after);
             if (changes.length) {
               report.leadChanges = changes;
@@ -382,6 +386,10 @@ export function createWorkerService({
       if (overlap) throw Error('主导方在 scope 内有已暂存改动；先提交或取消暂存再派活');
     }
     const repositoryKey = projectKey(projectPath);
+    if (leadScope.length) {
+      const selfConflict = findLeaseConflict([{workerId: 'lead', scope: leadScope}], scope, {repositoryKey});
+      if (selfConflict) throw Error(`路径租约冲突：${selfConflict.path} 已被主导方租约占用；等它交工后再派`);
+    }
     const leaseConflict = findLeaseConflict(leases, scope, {repositoryKey});
     if (leaseConflict) throw Error(`路径租约冲突：${leaseConflict.path} 已被${leaseConflict.workerId === 'lead' ? '主导方租约' : '工作方 ' + leaseConflict.workerId} 占用；等它交工后再派`);
     if (leadScope.length) {
@@ -550,7 +558,8 @@ export function createWorkerService({
 
   async function checkLease({session, paths}) {
     const sharedExtra = await readSharedFiles(session.projectPath);
-    return checkPaths(paths ?? [], leases, {sharedExtra, repositoryKey: projectKey(session.projectPath)});
+    const checked = checkPaths(paths ?? [], leases, {sharedExtra, repositoryKey: projectKey(session.projectPath)});
+    return {allowed: checked.allowed, blocked: checked.blocked.map(({path, workerId}) => ({path, workerId})), shared: checked.shared, invalid: checked.invalid};
   }
 
   async function closeAll() {

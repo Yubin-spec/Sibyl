@@ -224,3 +224,121 @@ test('consult tier runs read-only without a worktree',async()=>{
     await assert.rejects(stat(join(f.project,'.sibyl')),/ENOENT/);
   }finally{await f.cleanup();}
 });
+
+test('dispatch allows only one live worker per session',async()=>{
+  const f=await fixture();
+  try{
+    const first=await f.service.start({session:f.session,tool:'codex',tier:'dispatch',scope:['src/a']});
+    assert.ok(first.workerId);
+    await assert.rejects(f.service.start({session:f.session,tool:'codex',tier:'dispatch',scope:['docs']}),/只能有一个工作方/);
+  }finally{await f.cleanup();}
+});
+
+test('parallel allows disjoint workers up to the session limit',async()=>{
+  const f=await fixture();
+  try{
+    await f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src/a']});
+    await f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['docs']});
+    await f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src/b']});
+    await assert.rejects(f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src/c']}),/该会话同时最多 3 个工作方/);
+  }finally{await f.cleanup();}
+});
+
+test('leadScope reserves paths against every worker',async()=>{
+  const f=await fixture();
+  try{
+    await assert.rejects(f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['docs'],leadScope:['docs']}),/路径租约冲突/);
+    const first=await f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src/a'],leadScope:['docs','package.json']});
+    assert.ok(first.workerId);
+    await assert.rejects(f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['docs']}),/主导方租约/);
+    await assert.rejects(f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['package.json']}),/共享文件只能由主导方修改/);
+  }finally{await f.cleanup();}
+});
+
+test('overlapping scopes are refused and lease checks name the owner',async()=>{
+  const f=await fixture();
+  try{
+    const first=await f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src']});
+    const lease=await f.service.checkLease({session:f.session,paths:['src/a.txt','docs/x.md']});
+    assert.deepEqual(lease.blocked,[{path:'src/a.txt',workerId:first.workerId}]);
+    await assert.rejects(f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src/a']}),/路径租约冲突/);
+    const docs=await f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['docs']});
+    assert.ok(docs.workerId);
+  }finally{await f.cleanup();}
+});
+
+test('a scope covering a shared file is refused before any worktree exists',async()=>{
+  const f=await fixture();
+  try{
+    await assert.rejects(f.service.start({session:f.session,tool:'codex',tier:'dispatch',scope:['package.json']}),/共享文件只能由主导方修改/);
+    await assert.rejects(stat(join(f.project,'.sibyl','worktrees')).then(()=>true),/ENOENT/);
+  }finally{await f.cleanup();}
+});
+
+test('an out-of-scope edit is flagged in the report',async()=>{
+  const f=await fixture('evil');
+  try{
+    const started=await f.service.start({session:f.session,tool:'codex',scope:['src'],prompt:'x'});
+    const done=await wait(async()=>{const r=await f.service.result({session:f.session,workerId:started.workerId,waitMs:200});return r.status==='completed'?r:null;});
+    assert.deepEqual(done.report.scope.outOfScope,['docs/evil.txt']);
+    assert.equal(done.report.needsReview,true);
+  }finally{await f.cleanup();}
+});
+
+test('edits the lead makes inside the lease while a worker runs are reported',async()=>{
+  const f=await fixture('hang');
+  try{
+    const started=await f.service.start({session:f.session,tool:'codex',scope:['src']});
+    await wait(async()=>{const r=await f.service.result({session:f.session,workerId:started.workerId,waitMs:50});return r.status==='running'?r:null;});
+    await writeFile(join(f.project,'src','a.txt'),'lead changed\n');
+    git(f.project,'branch','lead-side');
+    git(f.project,'branch','sibyl/worker/rogue');
+    const closed=await f.service.close({session:f.session,workerId:started.workerId});
+    assert.deepEqual(closed.report.leadChanges,['src/a.txt']);
+    assert.deepEqual(closed.report.refsChanged.sort(),['refs/heads/lead-side','refs/heads/sibyl/worker/rogue']);
+  }finally{await f.cleanup();}
+});
+
+test('project-level shared overrides are enforced',async()=>{
+  const f=await fixture();
+  try{
+    await mkdir(join(f.project,'.sibyl'),{recursive:true});
+    await writeFile(join(f.project,'.sibyl','shared-files.json'),JSON.stringify({add:['config']}));
+    await assert.rejects(f.service.start({session:f.session,tool:'codex',tier:'dispatch',scope:['config/x.json']}),/共享文件只能由主导方修改/);
+  }finally{await f.cleanup();}
+});
+
+test('staged changes inside the worker scope are refused before dispatch',async()=>{
+  const f=await fixture();
+  try{
+    await writeFile(join(f.project,'src','a.txt'),'staged\n');
+    git(f.project,'add','src/a.txt');
+    await assert.rejects(f.service.start({session:f.session,tool:'codex',tier:'dispatch',scope:['src']}),/已暂存改动/);
+  }finally{await f.cleanup();}
+});
+
+test('an unconfirmed exit keeps its lease until close confirms the tree is gone',async()=>{
+  const f=await fixture();
+  try{
+    const record={id:'old',sourceSessionId:'s1',status:'orphan',stopReason:'exit-unconfirmed',childPid:process.pid,projectPath:f.project,repositoryKey:projectKey(f.project),scope:['src'],startedAt:new Date().toISOString()};
+    const store={listWorkers:()=>[record],saveWorker:()=>{}};
+    const service=createWorkerService({dataDir:f.dataDir,store,scripts:{codex:f.script,claude:f.script},isAlive:()=>false,killTree:async()=>true});
+    await assert.rejects(service.start({session:{id:'s1',projectPath:f.project},tool:'codex',tier:'parallel',scope:['src']}),/路径租约冲突/);
+    const closed=await service.close({session:{id:'s1'},workerId:'old'});
+    assert.equal(closed.status,'interrupted');
+    const allowed=await service.start({session:{id:'s1',projectPath:f.project},tool:'codex',tier:'parallel',scope:['src']});
+    assert.ok(allowed.workerId);
+    await service.close({session:{id:'s1'},workerId:allowed.workerId});
+    service.stop();
+  }finally{await f.cleanup();}
+});
+
+test('the watchdog uses the tier budget, not the consult numbers',async()=>{
+  const limits={dispatch:{maxDurationMs:300,noProgressMs:300,windowMs:60000,maxPerWindow:10,maxLivePerSession:1,maxLivePerProject:2},parallel:{maxDurationMs:300,noProgressMs:300,windowMs:60000,maxPerWindow:10,maxLivePerSession:2,maxLivePerProject:4}};
+  const f=await fixture('hang',limits);
+  try{
+    const started=await f.service.start({session:f.session,tool:'codex',scope:['src'],prompt:'hang'});
+    const stopped=await wait(async()=>{const r=await f.service.result({session:f.session,workerId:started.workerId,waitMs:100});return r.status==='stopped'?r:null;},4000);
+    assert.match(stopped.error,/超过最长运行时间|长时间没有收到/);
+  }finally{await f.cleanup();}
+});

@@ -77,7 +77,7 @@ export function scopeSharedConflicts(scope, {extra = []} = {}) {
       for (const shared of [...DEFAULT_SHARED_FILES, ...extra]) if (!out.includes(shared)) out.push(shared);
       continue;
     }
-    if (isSharedPath(entry)) {
+    if (isSharedPath(entry, {extra})) {
       if (!out.includes(entry)) out.push(entry);
       continue;
     }
