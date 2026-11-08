@@ -835,3 +835,27 @@ Verdict：**approve**。无 blocker/major；1 minor（恢复测试复用 fake，
 - Full suite：262 tests，258 pass / 4 skip / 0 fail（Node 26，2026-11-09）。
 - 未做/留后续：真实 Codex 可见性验收（需在 Codex 重启后确认线程可见）、微信死锁通道、daemon gate、persistent 同线程、USD 计量、强制 Focus 覆盖、运行台可视化。
 - 已知限制：PreToolUse 只覆盖 `Write`/`Edit`/`MultiEdit`/`NotebookEdit`；Bash/git/worker 写入不硬拦；`awaiting-visibility` 需要人/CLI 确认；评审 worker 占 consult 容量。
+
+## 验收边界（2026-11-09）
+
+计划评审不是“把计划改到完美”，验收也不以 `approve` 为唯一目标。
+
+**验收看什么**
+
+- 一轮完整真实回路：`start` → `awaiting-visibility` → `continue` → 真实 Codex verdict → 结构化 issue、artifact 和状态迁移。
+- `changes-required` 也是验收通过：说明评审器能返回可执行问题，执行方可以继续回应；不要求验收时把计划改到 `approve`。
+- `approve` 的标准是“没有未解决的 blocker/major”，不是“没有任何 minor”；minor 记录即可。
+- artifact 必须含 `planHash`、本轮快照、verdict、issues；状态迁移必须可观察。
+
+**有界停止**
+
+- 最多 3 轮；3 轮后仍有 blocker/major → `deadlock`，由人决定最后加轮或取消。
+- 最后加轮只能一次（`finalRoundUsed`）。
+- 每次 `changes-required` 后停在等待 `respond`，不自动续轮、不自动改计划。
+- 超时/失败/重启 → `failed`/`interrupted`，不静默重试。
+- `Review Focus` 是输入，不是必须逐条制造 issue 的清单；评审器不追求“完美计划”。
+
+**真实验收只跑一轮**
+
+- 真实 Codex 只验证协议、可见性、verdict、artifact、状态；其余轮次、并发、重启、question 回应由 fake worker 单元测试覆盖。
+- 本次真实验收结果：`changes-required`，2 条 major，artifact 已落盘；这视为回路验收通过，不继续追 `approve`。

@@ -5,6 +5,7 @@
 范围：第一阶段（Codex 主导；本地模型作为后续阶段）
 
 > 核心版范围以 `docs/superpowers/plans/2026-11-08-plan-review-loop-core.md` 的 Rev 5 为准：微信通道、绝对阻断、UserPromptSubmit、强制 Focus 覆盖、USD 计量、独立 `review` tier 属于后续阶段；核心版只承诺“Stop 提醒 + PreToolUse ask/deny，不覆盖 Bash/git/worker 写入”。
+> 验收只验证有界回路与结构化 verdict，不以 `approve` 为唯一目标；`changes-required` 也是验收通过。详见核心计划的“验收边界”。
 
 ## 1. 意图
 
