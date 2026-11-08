@@ -1558,11 +1558,7 @@ export async function createControl({
       else if (path === "/api/bindings/save") result = store.saveBinding(body);
       else if (path === "/api/bindings/delete")
         result = store.deleteBinding(body);
-      else if (path === "/api/sessions/register") {
-        if (body.mode === "native-inbox")
-          throw Error("Native inbox connector is not registered");
-        result = store.registerSession(body);
-      } else if (path === "/api/conversations/create") {
+      else if (path === "/api/conversations/create") {
         const mode = body.mode ?? "meeting";
         if (
           !["codex", "claude", "cursor", "deepseek"].includes(

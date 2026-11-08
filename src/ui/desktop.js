@@ -458,7 +458,6 @@ function applyState(next) {
   for (const id of [
     "quickProject",
     "newProject",
-    "sessionProject",
     "nativeProject",
     "diagnosticProject",
   ])
@@ -471,7 +470,6 @@ function applyState(next) {
   ]);
   for (const id of [
     "localAgent",
-    "sessionTool",
     "quickLocalAgent",
     "quickRemoteAgent",
   ])
@@ -508,7 +506,6 @@ function applyState(next) {
   renderTools();
   renderBindings();
   renderProjects();
-  renderSessions();
   renderNative();
   renderTarget();
   updateConversation();
@@ -1508,47 +1505,6 @@ function renderBindings() {
 }
 
 /**
- * 渲染已登记的工具会话。
- *
- * 区分原生收件箱会话和专用 CLI 会话；
- * 同时显示是否允许被 peer 发现。
- */
-function renderSessions() {
-  changed("sessions", [state.sessions, state.projects], () => {
-    $("sessions").replaceChildren();
-
-    // 专用 CLI 会话是 App 另行托管的独立进程，不是用户原工具里的聊天。
-    // 这段说明留在列表内部，避免用户把测试/核对会话误认为原会话收件记录。
-    $("sessions").append(
-      node(
-        "p",
-        "这里的“专用 CLI 会话”是 App 为跨工具核对或联调单独启动并保存的独立会话，不是你在 Codex、Claude、Cursor、DeepSeek 里打开的原聊天；原聊天收件与回复在上方灰色框中。",
-        "sessions-note",
-      ),
-    );
-    for (const s of state.sessions) {
-      const e = card(
-        s.title || "已登记会话",
-        projectName(s.projectId) + " · " + agentName(s.tool),
-      );
-      e.append(
-        node(
-          "span",
-          s.mode === "native-inbox"
-            ? s.capability === "unregistered"
-              ? "未接入原会话 · 等待真实连接器登记"
-              : "原生收件箱登记 · 以工具实际收信为准"
-            : "专用 CLI · 独立会话",
-          "badge",
-        ),
-        node("span", s.shared ? "允许发现" : "仅本机", "badge"),
-      );
-      $("sessions").append(e);
-    }
-  });
-}
-
-/**
  * 渲染原生收件箱与 MCP 状态。
  *
  * 包括：
@@ -1703,22 +1659,6 @@ $("connectCursor").onclick = () => connectNative("cursor", $("connectCursor"));
 $("connectCodex").onclick = () => connectNative("codex", $("connectCodex"));
 $("connectDeepSeek").onclick = () =>
   connectNative("deepseek", $("connectDeepSeek"));
-
-$("sessionForm").onsubmit = (e) => {
-  e.preventDefault();
-  action(
-    e.submitter,
-    () =>
-      api("sessions/register", {
-        title: $("sessionTitle").value.trim(),
-        projectId: $("sessionProject").value,
-        tool: $("sessionTool").value,
-        mode: $("sessionMode").value,
-        shared: $("sessionShared").checked,
-      }),
-    "专用会话已登记。",
-  );
-};
 
 /**
  * 渲染项目列表。
