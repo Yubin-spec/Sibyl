@@ -15,7 +15,16 @@ description: Use when the user says "你和 Codex/Claude 协作", asks another l
 
 ## 第 0 步：和 Codex 的讨论必须可见
 
-所有讨论（评审、核对、问答）必须自动出现在 Codex 桌面聊天列表里，不需要人做中间操作。默认用 `bridge_worker_start({tier:"consult", tool:"codex", prompt})` 新建一个可见的只读 Codex 会话；它走 app-server，会进列表。长评审的 `timeoutMs` 用 600000。`bridge_ask` 只用于续接已有原会话（不唤醒，需对方 `bridge_receive`）；`bridge_consult` 是 legacy 后台核对，Codex 路径使用 `codex exec` Worker，不进列表，仅人明确同意时用，事后必须同步到可见会话。
+所有讨论（评审、核对、问答）必须自动出现在 Codex 桌面聊天列表里，并且**从任务一开始**就打开给人看；不能等任务完成后再刷新。
+
+派活顺序固定：
+
+1. `bridge_worker_start({tool:"codex", tier:"consult"|"dispatch"|"parallel", scope?, prompt})` 建会话/工作方；
+2. **紧接着**运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/focus-codex-thread.ps1 -Match "<任务标题里独有的片段>" -TimeoutSec 25`，把 Codex 会话切到前台并确认已打开（脚本会轮询侧栏）；
+3. 确认可见后，再发/继续 `bridge_worker_turn`；**不要先等 `bridge_worker_result` 或完成**；
+4. 执行期间保持窗口可见，结束后再用 `bridge_worker_result` / `bridge_worker_accept` / `bridge_worker_close` 收报告。
+
+长评审的 `timeoutMs` 用 600000。`bridge_ask` 只用于续接已有原会话（不唤醒，需对方 `bridge_receive`）；`bridge_consult` 是 legacy 后台核对，Codex 路径使用 `codex exec` Worker，不进列表，仅人明确同意时用，事后必须同步到可见会话。
 
 上面的调用只示意档位；实际调用 `bridge_worker_start` 时还须传 `tool:"codex"` 和 `prompt`。旧版独立启动工具已在本版本移除。
 

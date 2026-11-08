@@ -2,17 +2,22 @@
 
 ## 和 Codex 的讨论必须可见（硬规则）
 
-所有与 Codex 的讨论——评审、核对、问答——必须自动出现在 Codex 桌面聊天列表里，不需要人做任何中间操作。默认方式：
+所有与 Codex 的讨论、评审和派活，必须**从任务一开始**就展示在人眼前；不能等任务完成后再刷新会话。
 
-1. 用 `bridge_spawn`（`tool:"codex"`, `sandbox:"read-only"`, `keepAlive:true`, `timeoutMs:600000`）**自动新建一个 Codex 会话**；把问题作为第一轮或 `bridge_spawn_turn` 发进去。
-2. 它走 Codex app-server，`originator` 是 `sibyl_spawn_codex_chat`，会出现在 Codex 的聊天列表里（与 Phase A 的 worker 会话同一种）。
-3. 长评审必须 spawn 时就把 `timeoutMs` 设为 600000；`bridge_spawn_turn` 的 timeout 不会覆盖 launcher 启动时固定的值。
+标准顺序（每次派活都照做）：
 
-`bridge_ask` 只对 **已经存在的 Codex 原会话** 投递问题，它不唤醒会话，对方必须自己调用 `bridge_receive`；只在人明确要求续在原会话时使用。`bridge_consult` 是 `codex exec` 后台 Worker，不进 Codex 列表，只在人明确同意时做后台只读核对，事后必须用可见会话同步结论。
+1. 新建 Codex 会话/工作方：
+   - 只读讨论：`bridge_worker_start({tool:"codex", tier:"consult", prompt})`；
+   - 写任务：`bridge_worker_start({tool:"codex", tier:"dispatch"|"parallel", scope, prompt})`。
+2. **紧接着**运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/focus-codex-thread.ps1 -Match "<任务标题里独有的片段>" -TimeoutSec 25`，把 Codex 窗口切到前台、打开该会话并保持可见。脚本会轮询侧栏直到会话出现。
+3. 确认会话已打开后，再发/继续任务 turn（`bridge_worker_turn` 或 `bridge_spawn_turn`）。**不要先等 `bridge_worker_result` 或任务完成**。
+4. 执行期间保持 Codex 窗口可见；结束后再用 `bridge_worker_result` / `bridge_worker_accept` / `bridge_worker_close` 收报告。
+
+`bridge_ask` 只对**已经存在的 Codex 原会话**投递问题，它不唤醒会话，需要对方 `bridge_receive`；仅在要求续原会话时使用。`bridge_consult` 是 legacy 后台 `codex exec` 核对，不进列表；新讨论默认不用。
 
 ## 大计划先评审（硬规则）
 
-写实施计划之后、动代码之前，如果属于「大计划」，必须先让 Codex 评审计划（按上面的可见性规则走 `bridge_ask`）。拿到回答后，把结论和采纳情况写回计划的 `## Codex review` 一节。
+写实施计划之后、动代码之前，如果属于「大计划」，必须先让 Codex 评审计划（按上面的可见性规则走 `bridge_worker_start({tier:"consult"})`，并在评审开始前用 focus 脚本打开会话）。拿到回答后，把结论和采纳情况写回计划的 `## Codex review` 一节。
 
 以下任一条件成立就是**大计划**，必须评审：
 
