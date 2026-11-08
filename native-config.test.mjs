@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,rm,mkdir} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 
@@ -45,4 +45,42 @@ test('Codex configuration adds a user-level MCP server with narrow auto approval
   await assert.rejects(mod.configureNativeTool({project:home,tool:'codex',dir:'/data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs',codexConfigPath:configPath}),/inline/);
   assert.equal(await readFile(configPath,'utf8'),'mcp_servers = { ai-bridge = {} }\n');
  }finally{await rm(home,{recursive:true,force:true});}
+});
+
+test('Claude hooks merge, stay idempotent and preserve unrelated settings',async()=>{
+ const mod=await import('./native-config.mjs');
+ const project=await mkdtemp(join(tmpdir(),'bridge-hooks-'));
+ const settings=join(project,'.claude','settings.local.json');
+ try{
+  await mkdir(join(project,'.claude'),{recursive:true});
+  await writeFile(settings,JSON.stringify({
+    permissions:{allow:['Bash(ls)']},
+    hooks:{
+      Stop:[{hooks:[{type:'command',command:'say done'}]}],
+      PreToolUse:[{matcher:'Bash',hooks:[{type:'command',command:'echo foreign'}]}]
+    }
+  }));
+  const options={project,tool:'claude',dir:'/data with space',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs',hookScript:'/app/sibyl-hook.mjs'};
+  const first=await mod.configureNativeTool(options);
+  assert.equal(first.hooksPath,settings);
+  const config=JSON.parse(await readFile(settings,'utf8'));
+  assert.deepEqual(config.permissions,{allow:['Bash(ls)']});
+  assert.ok(config.hooks.Stop.some(group=>group.hooks.some(hook=>hook.command==='say done')));
+  const oursStop=config.hooks.Stop.flatMap(group=>group.hooks).filter(hook=>hook.command.includes('sibyl-hook.mjs'));
+  assert.equal(oursStop.length,1);
+  assert.match(oursStop[0].command,/--event stop/);
+  assert.match(oursStop[0].command,/data with space/);
+  const oursPre=config.hooks.PreToolUse.flatMap(group=>group.hooks).filter(hook=>hook.command.includes('sibyl-hook.mjs'));
+  assert.equal(oursPre.length,1);
+  assert.match(oursPre[0].command,/--event pre-tool/);
+  assert.ok(config.hooks.PreToolUse.some(group=>group.matcher==='Bash'));
+  await mod.configureNativeTool(options);
+  assert.equal(await readFile(settings,'utf8'),JSON.stringify(config,null,2)+'\n');
+  await writeFile(settings,'{broken');
+  await assert.rejects(mod.configureNativeTool(options),/hooks|JSON/);
+  assert.equal(await readFile(settings,'utf8'),'{broken');
+  const exact=`"/app/node" "/app/sibyl-hook.mjs" --dir "${resolve('/data with space')}" --event stop`;
+  await writeFile(settings,JSON.stringify({hooks:{Stop:[{hooks:[{type:'command',command:exact}]},{hooks:[{type:'command',command:exact}]}]}}));
+  await assert.rejects(mod.configureNativeTool(options),/Ambiguous/);
+ }finally{await rm(project,{recursive:true,force:true});}
 });
