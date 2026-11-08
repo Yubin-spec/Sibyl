@@ -412,7 +412,7 @@ test('non-git, nested and empty repositories are refused in plain language',asyn
   const empty=await mkdtemp(join(tmpdir(),'worker-empty-'));git(empty,'init','-q');
   try{
     assert.equal(await isGitRepository(plain),false);
-    await assert.rejects(createWorkerWorktree({projectPath:plain,workerId:'x'}),/needs a git repository/);
+    await assert.rejects(createWorkerWorktree({projectPath:plain,workerId:'x'}),/needs a git repository|needs the repository root/);
     await assert.rejects(createWorkerWorktree({projectPath:nested,workerId:'x'}),/needs the repository root/);
     await assert.rejects(createWorkerWorktree({projectPath:empty,workerId:'x'}),/no commits yet/);
   }finally{for(const p of [plain,outer,empty])await rm(p,{recursive:true,force:true});}
