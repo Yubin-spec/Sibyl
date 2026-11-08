@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 import {spawn} from 'node:child_process';
+import {createInterface} from 'node:readline';
+import {randomUUID} from 'node:crypto';
+import {resolve} from 'node:path';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import {parseArgs} from 'node:util';
 import {resolveAgentExecutable,agentEnv} from '../runtime.mjs';
 
 export const WORKER_POLICY = `你是 Agents Calling 启动的工作方，不是与人对话的会话。只完成被派的任务，不扩大范围。
@@ -51,3 +56,59 @@ export async function runClaudeTurn({prompt,session=null,sandbox='read-only',eff
     child.stdin.end(prompt);
   });
 }
+
+export async function main(argv=process.argv.slice(2)){
+  const {values}=parseArgs({args:argv,options:{
+    project:{type:'string',default:process.cwd()},
+    dir:{type:'string'},
+    rpc:{type:'boolean',default:false},
+    sandbox:{type:'string',default:'read-only'},
+    effort:{type:'string',default:'high'},
+    claude:{type:'string'},
+    'timeout-ms':{type:'string',default:'180000'},
+    help:{type:'boolean',default:false},
+  },strict:true});
+  if(values.help){console.log([
+    'node scripts/spawn-claude-chat.mjs --project <dir> [--claude <path>] [--sandbox read-only|workspace-write]',
+    '  --project     working directory for the worker',
+    '  --claude      explicit Claude executable or Node entry file',
+    '  --sandbox     read-only (default) or workspace-write',
+    '  --effort      low | medium | high | ultra (default: high)',
+    '  --timeout-ms  per-turn timeout, 1000..600000 (default: 180000)',
+    '  --dir         accepted for parity with the Codex launcher; unused',
+    '  --rpc         accepted for parity with the Codex launcher; this host is RPC-only',
+  ].join('\n'));process.exit(0);}
+  const project=resolve(values.project);
+  const timeoutMs=Number(values['timeout-ms']);
+  if(!Number.isInteger(timeoutMs)||timeoutMs<1000||timeoutMs>600000)throw Error('timeoutMs must be 1000..600000');
+  if(!Object.hasOwn(SANDBOXES,values.sandbox)) throw Error('sandbox must be read-only or workspace-write');
+  if(!Object.hasOwn(EFFORTS,values.effort)) throw Error('effort must be low, medium, high or ultra');
+  const runnable=values.claude?await resolveAgentExecutable('claude',{executables:{claude:values.claude}}):null;
+
+  const send=value=>process.stdout.write(JSON.stringify(value)+'\n');
+  send({type:'thread',threadId:randomUUID(),sessionId:null,cwd:project,sandbox:values.sandbox,effort:values.effort});
+  let session=null,running=null;
+
+  async function handle(line){
+    let command;try{command=JSON.parse(line);}catch{send({type:'error',error:'Invalid JSON'});return;}
+    if(command.op==='close'){send({id:command.id,type:'closed'});process.exit(0);}
+    if(command.op!=='turn'){send({id:command.id,type:'error',error:'Unknown op'});return;}
+    if(running){send({id:command.id,type:'error',error:'A turn is already running in this worker'});return;}
+    running=(async()=>{
+      try{
+        const result=await runClaudeTurn({prompt:String(command.prompt??''),session,sandbox:values.sandbox,effort:values.effort,timeoutMs,cwd:project,executable:runnable});
+        session=result.sessionId;
+        send({id:command.id,type:'turn',text:result.text,tools:[]});
+      }catch(error){
+        send({id:command.id,type:'error',error:error.message});
+      }finally{running=null;}
+    })();
+  }
+
+  const lines=createInterface({input:process.stdin});
+  lines.on('line',line=>{void handle(line);});
+  lines.on('close',()=>process.exit(0));
+}
+
+const invoked=process.argv[1]?pathToFileURL(resolve(process.argv[1])).href:null;
+if(invoked&&invoked===import.meta.url) await main();
