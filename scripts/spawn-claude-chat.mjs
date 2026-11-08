@@ -6,10 +6,7 @@ import {resolve} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {parseArgs} from 'node:util';
 import {resolveAgentExecutable,agentEnv} from '../runtime.mjs';
-
-export const WORKER_POLICY = `你是 Agents Calling 启动的工作方，不是与人对话的会话。只完成被派的任务，不扩大范围。
-不安装依赖、不联网；需要确认的操作直接放弃，并在结果里说明哪一步被挡住。
-结束时用中文写清：改了哪些文件、跑了什么、还剩什么没做。`;
+import {WORKER_POLICY} from '../worker-policy.mjs';
 
 const EFFORTS={low:'low',medium:'medium',high:'high',ultra:'max'};
 

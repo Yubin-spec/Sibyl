@@ -733,7 +733,7 @@ Expected: FAIL，`Cannot find module ./worker-report.mjs`。
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `"$NODE26" --test --test-concurrency=1 --test-timeout=30000 worker-report.test.mjs`
-Expected: PASS，10 个用例全过。
+Expected: PASS，9 个用例全过（1 个符号链接用例在 Windows 跳过）。
 
 - [ ] **Step 5: 提交**
 
