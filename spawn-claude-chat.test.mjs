@@ -25,7 +25,7 @@ test('workspace-write worker may edit and run node tests only',()=>{
   assert.deepEqual(args.slice(0,8),head(40));
   assert.equal(args[args.indexOf('--permission-mode')+1],'acceptEdits');
   assert.equal(args[args.indexOf('--allowedTools')+1],
-    'Read,Grep,Glob,Edit,Write,Bash(node --test *)');
+    'Read,Grep,Glob,Edit,Write,Bash(node --test *),PowerShell(node --test *)');
   assert.ok(!args.includes('--tools'));
 });
 

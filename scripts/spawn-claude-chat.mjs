@@ -23,7 +23,8 @@ export function killWorkers(){
 
 const SANDBOXES={
   'read-only':['--tools','Read,Grep,Glob'],
-  'workspace-write':['--permission-mode','acceptEdits','--allowedTools','Read,Grep,Glob,Edit,Write,Bash(node --test *)'],
+  // Windows hosts run commands through PowerShell, macOS and Linux through Bash.
+  'workspace-write':['--permission-mode','acceptEdits','--allowedTools','Read,Grep,Glob,Edit,Write,Bash(node --test *),PowerShell(node --test *)'],
 };
 
 // Args only: the prompt travels on stdin, so it never lands in a process list.
