@@ -33,9 +33,10 @@ AI_BRIDGE_NODE=/path/to/standalone/node npm run build
 - 六个页面：会话、运行台、电脑、本机 AI、项目、设置。
 - 短码审批配对、同时连接多台电脑、双向状态同步和逐台撤销。
 - 多项目专用 CLI 讨论与频道协作：固定轮数或 agent 自主对话，收件侧线不打断主任务，消息持久化、SSE 增量更新和定向取消。
-- 原 AI 会话内跨工具核对：在“本机 AI”配置项目 MCP 时一并绑定“询问方项目 + 目标工具 → 目标项目”，`bridge_consult` 只传工具名即可在后台启动隔离的只读 Worker，并立即返回 `consultId`；未绑定才回退当前项目，不接管目标原聊天。
-- 对称工作方：`bridge_spawn` 的 `tool` 可选 `codex` / `claude`，可以让 Codex 派一个能改文件的 Claude 工作方，反之亦然；`sandbox` 默认只读，要改文件必须显式传 `workspace-write`。
-- 核对线程与止损：同一来源会话续接同一 Worker 线程；精确重复请求复用原线程；由代码执行 10 分钟 12 次预算、同目标 2 个并发上限、3 分钟总时长、2 分钟无进展停止。App“运行台”显示路由、轮次、进展、结果与停止原因。
+- 可见的跨工具评审：默认用 `bridge_worker_start({tool:"codex",tier:"consult",prompt})` 新建只读 Codex 会话，讨论出现在桌面聊天列表；`bridge_ask` 只续接已有原会话，需对方收信。`bridge_consult` 保留为 legacy 后台核对，仅人明确同意时使用。
+- 对称工作方：`bridge_worker_start` 的 `tool` 可选 `codex` / `claude`；`bridge_worker_turn` 入队续轮，`bridge_worker_result` 查询轮次与交工报告，`bridge_worker_close` 收工，`bridge_worker_accept` 记录主导方验收，`bridge_worker_list` 查看工作方，`bridge_lease_check` 检查路径租约。工作方由 daemon 管理，MCP 退出不会直接关闭它；改动在独立工作树中完成，由主导方验收并串行贴交付补丁。
+- 协作档位与模型：三档由 [skills/agents-calling](skills/agents-calling/SKILL.md) 判断；`model:"auto"` 按任务形状选 Codex 模型，`kind` 描述评审、实现、机械修改或困难探索，`risk` 区分普通与高风险任务；结果回显实际 `model` 和 `effort`。Claude 的 `auto` 使用其默认模型。
+- legacy 核对线程与止损：同一来源会话续接同一后台核对线程；精确重复请求复用原线程；由代码执行 10 分钟 12 次预算、同目标 2 个并发上限、3 分钟总时长、2 分钟无进展停止。App“运行台”显示这类核对的路由、轮次、进展、结果与停止原因。
 - 待处理队列：运行台顶部只显示一项最需要人工处理的事项，侧边栏显示数量；可逐项同意/拒绝配对、查看停止的核对或打开失败会话。非配对项支持“稍后处理”并持久化，避免重复打扰。
 - Claude Code / Cursor 项目级 MCP 配置，Codex 用户级 MCP 配置（仅对 ai-bridge 工具自动审批）；原聊天登记、定向收件、询问与答复回传。
 
