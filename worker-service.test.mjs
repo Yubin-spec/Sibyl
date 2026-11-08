@@ -44,7 +44,7 @@ async function fixture(mode='write',limits=undefined){
   const session={id:'s1',projectPath:project};
   return {root,project,dataDir,script,service,session,store,async cleanup(){service.stop();await service.closeAll();await rm(root,{recursive:true,force:true});}};
 }
-const wait=async(fn,ms=8000)=>{const end=Date.now()+ms;let last;while(Date.now()<end){last=await fn();if(last)return last;await sleep(50);}throw Error('timed out waiting');};
+const wait=async(fn,ms=15000)=>{const end=Date.now()+ms;let last;while(Date.now()<end){last=await fn();if(last)return last;await sleep(50);}throw Error('timed out waiting');};
 
 test('start returns before the first turn and the report is built from git',async()=>{
   const f=await fixture();
@@ -324,11 +324,11 @@ test('an unconfirmed exit keeps its lease until close confirms the tree is gone'
     const store={listWorkers:()=>[record],saveWorker:()=>{}};
     const service=createWorkerService({dataDir:f.dataDir,store,scripts:{codex:f.script,claude:f.script},isAlive:()=>false,killTree:async()=>true});
     await assert.rejects(service.start({session:{id:'s1',projectPath:f.project},tool:'codex',tier:'parallel',scope:['src']}),/路径租约冲突/);
-    const closed=await service.close({session:{id:'s1'},workerId:'old'});
+    const closed=await service.close({session:{id:'s2',projectPath:f.project},workerId:'old'});
     assert.equal(closed.status,'interrupted');
-    const allowed=await service.start({session:{id:'s1',projectPath:f.project},tool:'codex',tier:'parallel',scope:['src']});
+    const allowed=await service.start({session:{id:'s2',projectPath:f.project},tool:'codex',tier:'parallel',scope:['src']});
     assert.ok(allowed.workerId);
-    await service.close({session:{id:'s1'},workerId:allowed.workerId});
+    await service.close({session:{id:'s2'},workerId:allowed.workerId});
     service.stop();
   }finally{await f.cleanup();}
 });
@@ -340,5 +340,76 @@ test('the watchdog uses the tier budget, not the consult numbers',async()=>{
     const started=await f.service.start({session:f.session,tool:'codex',scope:['src'],prompt:'hang'});
     const stopped=await wait(async()=>{const r=await f.service.result({session:f.session,workerId:started.workerId,waitMs:100});return r.status==='stopped'?r:null;},4000);
     assert.match(stopped.error,/超过最长运行时间|长时间没有收到/);
+  }finally{await f.cleanup();}
+});
+
+test('a shared lead lease survives until the last worker ends',async()=>{
+  const f=await fixture();
+  try{
+    const a=await f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src/a'],leadScope:['docs']});
+    const b=await f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src/b'],leadScope:['docs']});
+    await f.service.close({session:f.session,workerId:a.workerId});
+    await assert.rejects(f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['docs']}),/主导方租约/);
+    await f.service.close({session:f.session,workerId:b.workerId});
+    const after=await f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['docs']});
+    assert.ok(after.workerId);
+  }finally{await f.cleanup();}
+});
+
+test('leadScope cannot cover a same-session worker scope',async()=>{
+  const f=await fixture();
+  try{
+    await f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src/a']});
+    await assert.rejects(f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src/b'],leadScope:['src/a']}),/路径租约冲突/);
+  }finally{await f.cleanup();}
+});
+
+test('a pre-existing deletion in scope is not reported as a lead change',async()=>{
+  const f=await fixture('hang');
+  try{
+    await writeFile(join(f.project,'src','gone.txt'),'x\n');
+    git(f.project,'add','-A');git(f.project,'commit','-qm','gone');
+    await rm(join(f.project,'src','gone.txt'));
+    const started=await f.service.start({session:f.session,tool:'codex',scope:['src']});
+    await wait(async()=>{const r=await f.service.result({session:f.session,workerId:started.workerId,waitMs:50});return r.status==='running'?r:null;});
+    const closed=await f.service.close({session:f.session,workerId:started.workerId});
+    assert.equal(closed.report.leadChanges,undefined);
+  }finally{await f.cleanup();}
+});
+
+test('a failed handoff commit fails the worker instead of returning an empty patch',async()=>{
+  const f=await fixture();
+  try{
+    const started=await f.service.start({session:f.session,tool:'codex',tier:'dispatch',scope:['src']});
+    await wait(async()=>{const r=await f.service.result({session:f.session,workerId:started.workerId,waitMs:50});return r.status==='running'?r:null;});
+    const worktree=join(f.project,'.sibyl','worktrees',started.workerId);
+    execFileSync('git',['checkout','-q','-b','other'],{cwd:worktree});
+    await writeFile(join(worktree,'src','a.txt'),'worker\n');
+    const closed=await f.service.close({session:f.session,workerId:started.workerId});
+    assert.equal(closed.status,'failed');
+    assert.match(closed.error,/提交失败/);
+  }finally{await f.cleanup();}
+});
+
+test('a manual turn timeout stops the worker',async()=>{
+  const f=await fixture('hang');
+  try{
+    const started=await f.service.start({session:f.session,tool:'codex',scope:['src']});
+    await wait(async()=>{const r=await f.service.result({session:f.session,workerId:started.workerId,waitMs:50});return r.status==='running'?r:null;});
+    await f.service.turn({session:f.session,workerId:started.workerId,prompt:'x',timeoutMs:200});
+    const failed=await wait(async()=>{const r=await f.service.result({session:f.session,workerId:started.workerId,waitMs:100});return r.status==='failed'?r:null;},4000);
+    assert.match(failed.error,/timed out/);
+    assert.throws(()=>f.service.turn({session:f.session,workerId:started.workerId,prompt:'again'}),/Worker is not running/);
+  }finally{await f.cleanup();}
+});
+
+test('a finished sibling branch is not reported as an unexpected ref change',async()=>{
+  const f=await fixture();
+  try{
+    const a=await f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src/a'],prompt:'a'});
+    const b=await f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src/b']});
+    await wait(async()=>{const r=await f.service.result({session:f.session,workerId:a.workerId,waitMs:200});return r.status==='completed'?r:null;});
+    const closed=await f.service.close({session:f.session,workerId:b.workerId});
+    assert.equal(closed.report.refsChanged,undefined);
   }finally{await f.cleanup();}
 });

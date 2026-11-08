@@ -12,6 +12,7 @@ import {
   assertSupportedRepository,
   createWorkerWorktree,
   commitWorktree,
+  headCommit,
   readSharedFiles,
   stagedPaths,
   listRefs,
@@ -108,7 +109,12 @@ export function createWorkerService({
 
   function releaseLeases(record) {
     const ids = new Set(record.leaseIds ?? []);
-    for (let index = leases.length - 1; index >= 0; index--) if (ids.has(leases[index].leaseId)) leases.splice(index, 1);
+    for (let index = leases.length - 1; index >= 0; index--) {
+      const lease = leases[index];
+      if (!ids.has(lease.leaseId)) continue;
+      if (lease.ownerRole === 'lead' && [...records.values()].some(other => other !== record && (LIVE.has(other.status) || other.status === 'orphan') && other.leaseIds?.includes(lease.leaseId))) continue;
+      leases.splice(index, 1);
+    }
     record.leaseIds = [];
   }
 
@@ -155,6 +161,7 @@ export function createWorkerService({
       record.turn = null;
       record.lastTurn = {...record.lastTurn, status: 'failed', error: 'Worker turn timed out', endedAt: iso(now())};
       turn.reject(Error('Worker turn timed out'));
+      void finalize(record, 'failed', Error('Worker turn timed out'));
     }, timeoutMs ?? workerTurnTimeoutMs(record.tier));
     record.turn.timer = timer;
     try {
@@ -177,7 +184,7 @@ export function createWorkerService({
       '--effort', record.effort ?? 'high', '--timeout-ms', '600000'];
     if (record.model) args.push('--model', record.model);
     if (record.tool === 'codex') args.push('--instructions', WORKER_POLICY);
-    const child = spawn(process.execPath, args, {cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true});
+    const child = spawn(process.execPath, args, {cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32'});
     record.child = child;
     record.childPid = child.pid;
     record.stderr = '';
@@ -259,7 +266,7 @@ export function createWorkerService({
     if (!record.child) return {gone: true};
     try { record.child.stdin.write(JSON.stringify({id: ++record.serial, op: 'close'}) + '\n'); } catch {}
     await Promise.race([record.childExit ?? Promise.resolve(), sleep(5000)]);
-    if (isAlive(record.childPid)) await killTree(record.childPid);
+    await killTree(record.childPid);
     await Promise.race([record.childExit ?? Promise.resolve(), sleep(2000)]);
     return {gone: !isAlive(record.childPid)};
   }
@@ -285,12 +292,25 @@ export function createWorkerService({
         return publicWorker(record);
       }
       let head = record.snapshotCommit ?? null;
+      let commitFailed = false;
       if (record.worktreePath && record.snapshotCommit) {
         try {
-          head = (await commitWorktree(record.worktreePath, 'sibyl: worker handoff', {branch: record.branch, snapshotCommit: record.snapshotCommit})) ?? record.snapshotCommit;
+          const committed = await commitWorktree(record.worktreePath, 'sibyl: worker handoff', {branch: record.branch, snapshotCommit: record.snapshotCommit});
+          head = committed ?? await headCommit(record.worktreePath);
         } catch (commitError) {
           record.reportError = commitError.message;
+          commitFailed = true;
+          head = null;
         }
+      }
+      if (commitFailed) {
+        record.status = 'failed';
+        record.error = `工作方提交失败：${record.reportError}`;
+        record.endedAt = iso(now());
+        releaseLeases(record);
+        save(record);
+        record.resolveDone?.(publicWorker(record));
+        return publicWorker(record);
       }
       if (record.tier !== 'consult' && record.worktreePath && head) {
         try {
@@ -322,7 +342,7 @@ export function createWorkerService({
           if (record.refsBefore) {
             const after = await listRefs(record.projectPath);
             const ignore = [...records.values()]
-              .filter(other => other.branch && (other === record || LIVE.has(other.status)))
+              .filter(other => other.branch)
               .map(other => 'refs/heads/' + other.branch);
             const changedRefs = refChanges(record.refsBefore, after, {ignore});
             if (changedRefs.length) {
@@ -394,7 +414,8 @@ export function createWorkerService({
     if (leaseConflict) throw Error(`路径租约冲突：${leaseConflict.path} 已被${leaseConflict.workerId === 'lead' ? '主导方租约' : '工作方 ' + leaseConflict.workerId} 占用；等它交工后再派`);
     if (leadScope.length) {
       for (const lease of leases) {
-        if (lease.repositoryKey !== repositoryKey || lease.ownerSessionId === session.id) continue;
+        if (lease.repositoryKey !== repositoryKey) continue;
+        if (lease.ownerSessionId === session.id && lease.ownerRole === 'lead') continue;
         const conflict = findLeaseConflict([lease], leadScope, {repositoryKey});
         if (conflict) throw Error(`路径租约冲突：${conflict.path} 已被${conflict.workerId === 'lead' ? '主导方租约' : '工作方 ' + conflict.workerId} 占用；等它交工后再派`);
       }
@@ -526,7 +547,9 @@ export function createWorkerService({
   }
 
   async function close({session, workerId}) {
-    const record = own(session, workerId);
+    const record = records.get(workerId);
+    const sameProject = record && session.projectPath && record.repositoryKey === projectKey(session.projectPath);
+    if (!record || (record.sourceSessionId !== session.id && !(record.status === 'orphan' && sameProject))) throw Error('Unknown worker');
     if (record.status === 'orphan') {
       await killTree(record.childPid);
       if (isAlive(record.childPid)) throw Error('Worker process tree is still alive; cannot release the lease');
@@ -577,8 +600,9 @@ export function createWorkerService({
   for (const loaded of store.listWorkers?.() ?? []) {
     const record = {...loaded};
     if (record.status === 'starting' || record.status === 'running') {
-      record.status = 'interrupted';
-      record.error = '后台已重启；该工作方未完成，工作树和分支保留。';
+      record.status = 'orphan';
+      record.stopReason = 'exit-unconfirmed';
+      record.error = '后台已重启；工作树和分支保留，确认进程已退出后关闭以释放租约。';
     }
     records.set(record.id, record);
     if (record.stopReason === 'exit-unconfirmed') {

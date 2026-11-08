@@ -83,8 +83,9 @@ export async function openWorkspace(dir) {
   const workers = meta('workers');
   let workersInterrupted = false;
   for (const record of workers) if (record.status === 'starting' || record.status === 'running') {
-    record.status = 'interrupted';
-    record.error = '后台已重启；该工作方未完成，工作树和分支保留。';
+    record.status = 'orphan';
+    record.stopReason = 'exit-unconfirmed';
+    record.error = '后台已重启；工作树和分支保留，确认进程已退出后关闭以释放租约。';
     record.updatedAt = now();
     workersInterrupted = true;
   }

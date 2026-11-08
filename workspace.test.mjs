@@ -149,7 +149,8 @@ test('worker records persist and running ones become interrupted after a restart
     const second=await openWorkspace(dir);
     try{
       const byId=Object.fromEntries(second.listWorkers().map(w=>[w.id,w]));
-      assert.equal(byId.w1.status,'interrupted');
+      assert.equal(byId.w1.status,'orphan');
+      assert.equal(byId.w1.stopReason,'exit-unconfirmed');
       assert.match(byId.w1.error,/后台已重启/);
       assert.equal(byId.w2.status,'completed');
     }finally{second.close();}

@@ -1,7 +1,7 @@
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createHash} from 'node:crypto';
-import {copyFile,chmod,readFile,writeFile,mkdir,rm,stat,lstat,readlink,symlink,readdir} from 'node:fs/promises';
+import {copyFile,chmod,readFile,writeFile,mkdir,rm,stat,lstat,readlink,symlink,readdir,realpath} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import {join,dirname,resolve,isAbsolute} from 'node:path';
 import {canonicalProjectPath,normalizedPath} from './project-path.mjs';
@@ -10,6 +10,7 @@ import {DEFAULT_SHARED_FILES,pathWithin} from './path-scope.mjs';
 const run = promisify(execFile);
 const MAX_BUFFER = 64 * 1024 * 1024;
 const fingerprint = value => createHash('sha256').update(value).digest('hex');
+const MISSING = fingerprint('missing');
 
 async function git(cwd, ...args) {
   const {stdout} = await run('git', args, {cwd, maxBuffer: MAX_BUFFER});
@@ -22,6 +23,15 @@ async function gitOk(cwd, ...args) {
 
 function gitNull(cwd, ...args) {
   return git(cwd, ...args).then(output => output.split('\0').filter(Boolean));
+}
+
+async function collectSnapshotFiles(projectPath) {
+  const tracked = await gitNull(projectPath, 'ls-files', '--cached', '-z');
+  const ignored = new Set(await gitNull(projectPath, 'ls-files', '--cached', '--ignored', '--exclude-standard', '-z'));
+  const untracked = await gitNull(projectPath, 'ls-files', '--others', '--exclude-standard', '-z');
+  return [...new Set([...tracked.filter(file => !ignored.has(file)), ...untracked])]
+    .filter(file => !file.startsWith('.sibyl/'))
+    .sort();
 }
 
 export async function isGitRepository(projectPath) {
@@ -109,6 +119,13 @@ export async function snapshotFingerprint(projectPath, files) {
   return {files: map, digest};
 }
 
+async function ensureParent(worktreePath, target) {
+  const parent = dirname(target);
+  await mkdir(parent, {recursive: true});
+  const real = await realpath(parent);
+  if (!pathWithin(worktreePath, real)) throw Error(`Worker dispatch does not support symlinks outside the repository: ${target}`);
+}
+
 async function copyEntry(projectPath, worktreePath, file, copied, deleted, skipped) {
   const source = join(projectPath, file);
   const target = join(worktreePath, file);
@@ -125,7 +142,7 @@ async function copyEntry(projectPath, worktreePath, file, copied, deleted, skipp
     if (isAbsolute(link)) throw Error(`Worker dispatch does not support symlinks outside the repository: ${file}`);
     const resolved = resolve(dirname(source), link);
     if (!pathWithin(projectPath, resolved)) throw Error(`Worker dispatch does not support symlinks outside the repository: ${file}`);
-    await mkdir(dirname(target), {recursive: true});
+    await ensureParent(worktreePath, target);
     await rm(target, {force: true, recursive: true});
     await symlink(link, target);
     skipped.symlinks.push(file);
@@ -134,7 +151,8 @@ async function copyEntry(projectPath, worktreePath, file, copied, deleted, skipp
   }
   if (info.isDirectory()) throw Error(`Worker dispatch does not support submodules: ${file}`);
   if (!info.isFile()) throw Error(`Worker dispatch does not support file type: ${file}`);
-  await mkdir(dirname(target), {recursive: true});
+  await ensureParent(worktreePath, target);
+  await rm(target, {force: true, recursive: true});
   await copyFile(source, target);
   await chmod(target, info.mode);
   copied.push(file);
@@ -158,12 +176,8 @@ export async function createWorkerWorktree({projectPath, workerId, branchPrefix 
       await tryRemove(real, worktreePath, branch);
       await git(real, 'worktree', 'add', '-b', branch, worktreePath, base);
 
-      const tracked = await gitNull(real, 'ls-files', '--cached', '-z');
       const ignored = new Set(await gitNull(real, 'ls-files', '--cached', '--ignored', '--exclude-standard', '-z'));
-      const untracked = await gitNull(real, 'ls-files', '--others', '--exclude-standard', '-z');
-      const files = [...new Set([...tracked.filter(file => !ignored.has(file)), ...untracked])]
-        .filter(file => !file.startsWith('.sibyl/'))
-        .sort();
+      const files = await collectSnapshotFiles(real);
 
       const before = await snapshotFingerprint(real, files);
       if (onBeforeCopy) await onBeforeCopy();
@@ -180,7 +194,9 @@ export async function createWorkerWorktree({projectPath, workerId, branchPrefix 
         deleted.push(file);
       }
 
-      const after = await snapshotFingerprint(real, files);
+      const afterFiles = await collectSnapshotFiles(real);
+      if (afterFiles.length !== files.length || afterFiles.some((file, index) => file !== files[index])) throw Error('SNAPSHOT_CHANGED');
+      const after = await snapshotFingerprint(real, afterFiles);
       if (before.digest !== after.digest) throw Error('SNAPSHOT_CHANGED');
 
       let snapshotCommit = base;
@@ -192,7 +208,7 @@ export async function createWorkerWorktree({projectPath, workerId, branchPrefix 
 
       const leadDigest = {files: {}, truncated: false};
       for (const [file, hash] of Object.entries(after.files)) {
-        if (scope.some(entry => pathWithin(entry, file))) leadDigest.files[file] = hash;
+        if (hash !== MISSING && scope.some(entry => pathWithin(entry, file))) leadDigest.files[file] = hash;
       }
 
       return {worktreePath, branch, baseCommit: base, snapshotCommit, snapshotFiles: files, copied, deleted, skipped, leadDigest};
@@ -227,6 +243,10 @@ export async function commitWorktree(worktreePath, message, {branch, snapshotCom
 
 export async function worktreeStatus(worktreePath) {
   return (await git(worktreePath, 'status', '--porcelain')).trim();
+}
+
+export async function headCommit(worktreePath) {
+  return (await git(worktreePath, 'rev-parse', 'HEAD')).trim();
 }
 
 export async function removeWorkerWorktree({projectPath, branch, worktreePath}) {

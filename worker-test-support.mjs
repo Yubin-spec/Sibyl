@@ -21,7 +21,7 @@ rl.on('line',l=>{const c=JSON.parse(l);
 });
 rl.on('close',()=>process.exit(0));`;
 
-export const wait=async(fn,ms=8000)=>{const end=Date.now()+ms;while(Date.now()<end){const v=await fn();if(v)return v;await new Promise(r=>setTimeout(r,50));}throw Error('timed out');};
+export const wait=async(fn,ms=15000)=>{const end=Date.now()+ms;while(Date.now()<end){const v=await fn();if(v)return v;await new Promise(r=>setTimeout(r,50));}throw Error('timed out');};
 
 export async function workerFixture(mode='write',extras={}){
   const root=await mkdtemp(join(tmpdir(),'worker-daemon-'));

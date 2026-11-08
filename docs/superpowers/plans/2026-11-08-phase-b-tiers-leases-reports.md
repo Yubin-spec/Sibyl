@@ -541,7 +541,7 @@ Expected: FAIL，`Cannot find module ./worker-worktree.mjs`。
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `"$NODE26" --test --test-concurrency=1 --test-timeout=30000 worker-worktree.test.mjs`
-Expected: PASS，13 个用例全过。
+Expected: PASS，15 个用例全过（13 通过，2 个符号链接用例在 Windows 跳过）。
 
 - [ ] **Step 5: 提交**
 
@@ -1207,7 +1207,7 @@ Expected: FAIL，`start` 没有租约/档位/共享文件校验，也没有 `che
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `"$NODE26" --test --test-concurrency=1 --test-timeout=30000 worker-service.test.mjs`
-Expected: PASS，22 个用例全过。
+Expected: PASS，26 个用例全过。
 
 - [ ] **Step 5: 提交**
 
@@ -1230,7 +1230,7 @@ git commit -m "feat(worker): enforce leases, tiers and worker budgets"
 - Test: `worker-test-support.mjs`（新建，Task 8 / Task 10 共用）
 
 **Interfaces:**
-- `openWorkspace` 新增：`listWorkers() -> record[]`、`saveWorker(record)`（保留**所有 live 记录 + 所有 `orphan`/`exit-unconfirmed` 记录** + 最近 100 条已结束记录，按 `startedAt` 倒序，绝不能裁掉 `starting/running/orphan`）；打开库时把 `starting/running` 的工作方标成 `interrupted`，`error='后台已重启；该工作方未完成，工作树和分支保留。'`；`orphan` 记录原样保留。
+- `openWorkspace` 新增：`listWorkers() -> record[]`、`saveWorker(record)`（保留**所有 live 记录 + 所有 `orphan`/`exit-unconfirmed` 记录** + 最近 100 条已结束记录，按 `startedAt` 倒序，绝不能裁掉 `starting/running/orphan`）；打开库时把 `starting/running` 的工作方标成 `orphan` + `stopReason='exit-unconfirmed'`（保留租约，确认退出后由 close 释放），`error='后台已重启；工作树和分支保留，确认进程已退出后关闭以释放租约。'`；`orphan` 记录原样保留。
 - `openNativeInbox` 新增选项 `worker:{start,turn,result,close,list,check}`，新增端点（都在 `own(body)` 之后）：
   - `POST /worker/start` → 202 `worker.start({session:{...publicSession(s),projectPath:s.projectPath},tool,tier,scope,prompt?,model?,kind?,risk?,effort?,timeoutMs?})`
   - `POST /worker/turn` → `{workerId,prompt,timeoutMs?}`
@@ -1260,7 +1260,8 @@ test('worker records persist and running ones become interrupted after a restart
     const second=await openWorkspace(dir);
     try{
       const byId=Object.fromEntries(second.listWorkers().map(w=>[w.id,w]));
-      assert.equal(byId.w1.status,'interrupted');
+      assert.equal(byId.w1.status,'orphan');
+      assert.equal(byId.w1.stopReason,'exit-unconfirmed');
       assert.match(byId.w1.error,/后台已重启/);
       assert.equal(byId.w2.status,'completed');
     }finally{second.close();}
@@ -1834,3 +1835,21 @@ node scripts/notify-wechat.mjs --title "Phase B 完成" --body "三档、路径�
 - 最终 Codex 回复：**「可开工」**（2026-11-08）。
 
 **模型策略增量（同一可见会话）：** 新增 `model:'auto'` + `kind/risk` 与 `chooseCodexModel`。Codex 指出 4 点：Task 7 未转发参数、要按 tool 分流、显式覆盖与不支持模型要失败、未知值契约不统一。已修入 Task 1/5/7/8/9，并补「launcher 收到 `--model/--effort`」「Claude auto 不传模型」「显式 effort 覆盖」「不支持的 model 失败」四个测试；Codex 最终回复**「可开工」**。
+
+### 最终分支评审（可见会话，Task 10 之后）
+
+Codex 在 thread `01a1bab4-19e8-76a2-bda3-9f8d3edcf98e` 上评审 `9c5dddd..HEAD` 的 `.mjs` diff，提出 11 个 Important，已全部在 `fix(worker): close final review gaps` 一次修复，并补测试：
+
+1. 复制前删除目标旧条目并校验父目录 realpath，防止旧 symlink 被跟随。
+2. `closeChild` 无条件执行进程树终止；POSIX spawn 建独立进程组。
+3. 重启把 `starting/running` 恢复成 `orphan` + `exit-unconfirmed` 并保留租约。
+4. 共享 lead 租约按引用计数释放，最后一个引用者结束才删除。
+5. `leadScope` 只豁免同会话的 lead 租约，不能覆盖同会话 worker 租约。
+6. 复制后重新枚举文件集合，新增/删除文件触发重试。
+7. `leadDigest` 过滤 missing 条目，已有删除/ignored 文件不再误报 `leadChanges`。
+8. 交工提交失败让 worker 变成 `failed`，不返回空交付补丁；成功或无需提交都读取实际 HEAD。
+9. 手动轮次超时进入统一收工路径并停止底层执行。
+10. refs 比对忽略所有已登记 worker 分支，正常并行交付不被兄弟分支阻断。
+11. 允许同项目的新会话关闭 orphan 并释放租约（仍按项目隔离）。
+
+最终全量：229 tests（225 pass / 4 skip），0 fail。

@@ -170,3 +170,29 @@ test('in-repo symlinks are copied as links, not expanded',async t=>{
     assert.equal((await fs.lstat(join(wt.worktreePath,'src','link.txt'))).isSymbolicLink(),true);
   }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('a file added during copy is retried and included in the snapshot',async()=>{
+  const root=await repo();
+  try{
+    let once=false;
+    const wt=await createWorkerWorktree({projectPath:root,workerId:'w10',scope:['src'],onBeforeCopy:async()=>{if(!once){once=true;await writeFile(join(root,'src','late.txt'),'late\n');}}});
+    assert.equal(await readFile(join(wt.worktreePath,'src','late.txt'),'utf8'),'late\n');
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('a stale symlink in the worktree is replaced instead of followed',async t=>{
+  if(process.platform==='win32')return t.skip('creating symlinks needs privileges on Windows');
+  const root=await repo();
+  try{
+    const fs=await import('node:fs/promises');
+    await writeFile(join(root,'src','target.txt'),'target\n');
+    await fs.symlink('target.txt',join(root,'src','link.txt'));
+    git(root,'add','-A');git(root,'commit','-qm','link');
+    await fs.rm(join(root,'src','link.txt'));
+    await writeFile(join(root,'src','link.txt'),'real content\n');
+    const wt=await createWorkerWorktree({projectPath:root,workerId:'w11'});
+    const info=await fs.lstat(join(wt.worktreePath,'src','link.txt'));
+    assert.equal(info.isFile(),true);
+    assert.equal(await readFile(join(wt.worktreePath,'src','link.txt'),'utf8'),'real content\n');
+  }finally{await rm(root,{recursive:true,force:true});}
+});
