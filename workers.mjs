@@ -428,6 +428,7 @@ export function createWorkerService({
       modelReason = 'explicit';
     }
 
+    if (closing) throw Error('Daemon is shutting down');
     const id = randomUUID();
     const worktreePath = tier === 'consult' ? null : join(projectPath, '.sibyl', 'worktrees', id);
     const branch = tier === 'consult' ? null : `sibyl/worker/${id}`;
@@ -592,21 +593,23 @@ export function createWorkerService({
   const watchdog = setInterval(() => {
     if (stopped || closing) return;
     for (const record of [...records.values()]) {
-      if (!LIVE.has(record.status)) continue;
+      if (!LIVE.has(record.status) || record.finalizing) continue;
       const limit = limits[record.tier];
       if (!limit) continue;
-      const progress = checkProgress(record, {now: now(), limits: {maxDurationMs: limit.maxDurationMs, noProgressMs: limit.noProgressMs}});
+      const current = now();
+      if (!sessionAlive(record.sourceSessionId) && current - Date.parse(record.lastProgressAt || record.startedAt) > orphanGraceMs) {
+        record.stopReason = 'orphan';
+        void finalize(record, 'orphan', Error('主导方会话已结束且工作方长时间没有进展，已作为孤儿停止；工作树和分支保留。'));
+        continue;
+      }
+      const progress = checkProgress(record, {now: current, limits: {maxDurationMs: limit.maxDurationMs, noProgressMs: limit.noProgressMs}});
       if (progress.stalled) {
         record.stopReason = progress.reason;
         void finalize(record, 'stopped', Error(progress.reason === 'timeout' ? '工作方超过最长运行时间，已停止。' : '长时间没有收到工作方进展，已停止。'));
         continue;
       }
-      if (!sessionAlive(record.sourceSessionId) && now() - Date.parse(record.lastProgressAt || record.startedAt) > orphanGraceMs) {
-        record.stopReason = 'orphan';
-        void finalize(record, 'orphan', Error('主导方会话已结束且工作方长时间没有进展，已作为孤儿停止；工作树和分支保留。'));
-      }
     }
-  }, Math.min(1000, Math.max(50, Math.floor(minIdle / 4))));
+  }, Math.min(1000, Math.max(50, Math.floor(Math.min(minIdle, orphanGraceMs) / 4))));
   watchdog.unref?.();
 
   return {start, turn, result, close, accept, list, checkLease, closeAll, stop};

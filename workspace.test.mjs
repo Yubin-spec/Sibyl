@@ -4,6 +4,7 @@ import { access, mkdtemp, mkdir, readFile, rm, symlink, stat } from 'node:fs/pro
 import { constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { openWorkspace } from './workspace.mjs';
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'workspace-'));
@@ -135,4 +136,37 @@ test('attention dismissals persist and reject unsafe keys', async t => {
   w.close();
   const reopened=await open();
   assert.deepEqual(reopened.snapshot().settings.dismissedAttention,[key]);
+});
+
+test('worker records persist and running ones become interrupted after a restart',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'workspace-workers-'));
+  try{
+    const first=await openWorkspace(dir);
+    first.saveWorker({id:'w1',status:'running',startedAt:new Date().toISOString(),scope:['src'],projectPath:'/p'});
+    first.saveWorker({id:'w2',status:'completed',startedAt:new Date().toISOString(),scope:['src'],projectPath:'/p'});
+    assert.equal(first.listWorkers().length,2);
+    first.close();
+    const second=await openWorkspace(dir);
+    try{
+      const byId=Object.fromEntries(second.listWorkers().map(w=>[w.id,w]));
+      assert.equal(byId.w1.status,'interrupted');
+      assert.match(byId.w1.error,/后台已重启/);
+      assert.equal(byId.w2.status,'completed');
+    }finally{second.close();}
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('saving many ended workers never evicts a live one',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'workspace-workers-live-'));
+  try{
+    const ws=await openWorkspace(dir);
+    ws.saveWorker({id:'live',status:'running',startedAt:new Date(0).toISOString(),scope:['src'],projectPath:'/p'});
+    ws.saveWorker({id:'orphan',status:'orphan',stopReason:'exit-unconfirmed',startedAt:new Date(1).toISOString(),scope:['src'],projectPath:'/p'});
+    for(let i=0;i<120;i++)ws.saveWorker({id:'done-'+i,status:'completed',startedAt:new Date(1000+i).toISOString(),scope:['src'],projectPath:'/p'});
+    const workers=ws.listWorkers();
+    assert.ok(workers.some(w=>w.id==='live'));
+    assert.ok(workers.some(w=>w.id==='orphan'));
+    assert.ok(workers.length<=122);
+    ws.close();
+  }finally{await rm(dir,{recursive:true,force:true});}
 });

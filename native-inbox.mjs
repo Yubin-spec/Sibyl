@@ -6,7 +6,10 @@ import {projectKey} from './project-path.mjs';
 import {listenLoopback} from './runtime.mjs';
 
 const validId=v=>typeof v==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(v);
+const workerId=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(v);
 const text=(v,max)=>typeof v==='string'&&v.trim()&&v.length<=max;
+const workerPaths=v=>Array.isArray(v)&&v.length>=1&&v.length<=64&&v.every(path=>text(path,1024));
+const workerTimeout=v=>v===undefined||Number.isInteger(v)&&v>=1000&&v<=600000;
 const tools=new Set(['claude','codex','cursor','workbuddy']);
 const equal=(a,b)=>typeof a==='string'&&typeof b==='string'&&Buffer.byteLength(a)===Buffer.byteLength(b)&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
 
@@ -31,7 +34,7 @@ export async function openNativeInbox(options){
   const release=async()=>{const owner=JSON.parse(await readFile(lock,'utf8').catch(()=>'{}'));if(owner.nonce===nonce)await rm(lock,{force:true});};
   try{return await createNativeInbox({...options,release});}catch(e){await release();throw e;}
 }
-async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consult,consultResult,consultStop,resolveProject,autoBind}){
+async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consult,consultResult,consultStop,resolveProject,autoBind,worker={}}){
   await mkdir(dir,{recursive:true,mode:0o700});
   const file=join(dir,'native-questions.json'),runtimeFile=join(dir,'native-runtime.json');
   let questions=[];try{questions=JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
@@ -84,6 +87,49 @@ async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consu
       }
       const s=own(body);
       // Local callers authenticate their session lease; never accept a self-reported source.
+      if(req.url==='/worker/start'){
+        if(!['codex','claude'].includes(body.tool)||!['consult','dispatch','parallel'].includes(body.tier)||
+          (!(body.tier==='consult'&&body.scope===undefined)&&!workerPaths(body.scope))||
+          body.leadScope!==undefined&&!workerPaths(body.leadScope)||
+          body.prompt!==undefined&&(typeof body.prompt!=='string'||body.prompt.length>20000)||
+          body.model!==undefined&&!text(body.model,80)||
+          body.kind!==undefined&&!['review','implement','mechanical','frontier'].includes(body.kind)||
+          body.risk!==undefined&&!['normal','high'].includes(body.risk)||
+          body.effort!==undefined&&!['low','medium','high','ultra'].includes(body.effort)||!workerTimeout(body.timeoutMs))throw Error('Invalid worker start request');
+        if(typeof worker.start!=='function')throw Error('Worker service is unavailable');
+        return send(202,await worker.start({session:{...publicSession(s),projectPath:s.projectPath},tool:body.tool,tier:body.tier,scope:body.scope,leadScope:body.leadScope,prompt:body.prompt,model:body.model,kind:body.kind,risk:body.risk,effort:body.effort,timeoutMs:body.timeoutMs}));
+      }
+      if(req.url==='/worker/turn'){
+        if(!workerId(body.workerId)||!text(body.prompt,20000)||!workerTimeout(body.timeoutMs))throw Error('Invalid worker request');
+        if(typeof worker.turn!=='function')throw Error('Worker service is unavailable');
+        return send(200,await worker.turn({session:{...publicSession(s),projectPath:s.projectPath},workerId:body.workerId,prompt:body.prompt,timeoutMs:body.timeoutMs}));
+      }
+      if(req.url==='/worker/result'){
+        const waitMs=body.waitMs===undefined?0:body.waitMs;
+        if(!workerId(body.workerId)||!Number.isInteger(waitMs)||waitMs<0||waitMs>25000)throw Error('Invalid worker request');
+        if(typeof worker.result!=='function')throw Error('Worker service is unavailable');
+        return send(200,await worker.result({session:{...publicSession(s),projectPath:s.projectPath},workerId:body.workerId,waitMs}));
+      }
+      if(req.url==='/worker/close'){
+        if(!workerId(body.workerId))throw Error('Invalid worker request');
+        if(typeof worker.close!=='function')throw Error('Worker service is unavailable');
+        return send(200,await worker.close({session:{...publicSession(s),projectPath:s.projectPath},workerId:body.workerId}));
+      }
+      if(req.url==='/worker/accept'){
+        if(!workerId(body.workerId)||typeof body.accepted!=='boolean'||body.note!==undefined&&(typeof body.note!=='string'||body.note.length>2000))throw Error('Invalid worker request');
+        if(typeof worker.accept!=='function')throw Error('Worker service is unavailable');
+        return send(200,await worker.accept({session:{...publicSession(s),projectPath:s.projectPath},workerId:body.workerId,accepted:body.accepted,note:body.note}));
+      }
+      if(req.url==='/worker/list'){
+        if(body.all!==undefined&&typeof body.all!=='boolean')throw Error('Invalid worker request');
+        if(typeof worker.list!=='function')throw Error('Worker service is unavailable');
+        return send(200,{workers:await worker.list({session:{...publicSession(s),projectPath:s.projectPath},all:body.all??false})});
+      }
+      if(req.url==='/lease/check'){
+        if(!workerPaths(body.paths))throw Error('Invalid worker request');
+        if(typeof worker.check!=='function')throw Error('Worker service is unavailable');
+        return send(200,await worker.check({session:{...publicSession(s),projectPath:s.projectPath},paths:body.paths}));
+      }
       if(req.url==='/ask'){
         let targetSessionId=body.targetSessionId;
         if(targetSessionId===undefined){

@@ -64,6 +64,7 @@ export async function openWorkspace(dir) {
       db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('settings',JSON.stringify(defaults));
       db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('bindings',JSON.stringify([]));
       db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('consultations',JSON.stringify([]));
+      db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('workers',JSON.stringify([]));
       for (const row of db.prepare('SELECT id,data FROM conversations').all()) {
         const record=JSON.parse(row.data);
         if(record.status==='running') {record.status='failed';record.updatedAt=now();db.prepare('UPDATE conversations SET data=? WHERE id=?').run(JSON.stringify(record),row.id);}
@@ -79,6 +80,15 @@ export async function openWorkspace(dir) {
     record.updatedAt = now();
   }
   if (consultations.some(record => record.status === 'interrupted')) putMeta('consultations', consultations);
+  const workers = meta('workers');
+  let workersInterrupted = false;
+  for (const record of workers) if (record.status === 'starting' || record.status === 'running') {
+    record.status = 'interrupted';
+    record.error = '后台已重启；该工作方未完成，工作树和分支保留。';
+    record.updatedAt = now();
+    workersInterrupted = true;
+  }
+  if (workersInterrupted) putMeta('workers', workers);
   const get = (table,id) => {
     const row=db.prepare(`SELECT data FROM ${table} WHERE id=?`).get(text(id,'id'));
     if(!row) throw new Error(`${table} record not found: ${id}`);
@@ -149,6 +159,17 @@ export async function openWorkspace(dir) {
     getSession(id) {return get('sessions',id);},
     getConversation(id) {return get('conversations',id);},
     listConsultations() {return meta('consultations');},
+    listWorkers() {return meta('workers');},
+    saveWorker(record) {return transaction(()=>{
+      const id=text(record.id,'id');
+      const value={...record,id,updatedAt:now()};
+      const records=meta('workers').filter(item=>item.id!==id);
+      records.push(value);
+      records.sort((a,b)=>String(b.startedAt).localeCompare(String(a.startedAt)));
+      let ended=0;
+      putMeta('workers',records.filter(item=>['starting','running','orphan'].includes(item.status)||item.stopReason==='exit-unconfirmed'||ended++<100));
+      return value;
+    });},
     saveConsultation(record) {return transaction(()=>{
       const id=text(record.id,'id');
       const value={...record,id,updatedAt:now()};
