@@ -273,6 +273,7 @@ export function createNotifyService({
 }={}){
   const resolved=config===undefined?loadConfigFile(configPath):normalizeConfig(config);
   const persisted=loadStateFile(statePath);
+  const senderFn=typeof sender==='function'?sender:input=>notify({title:input.title,body:input.body,config:input.config,signal:input.signal});
   const secrets=resolved?CONFIG_FIELDS.map(field=>resolved[field]).filter(Boolean):[];
   const windowMs=(()=>{const value=Number(resolved?.dedupeMs);return Number.isFinite(value)&&value>=0?Math.min(value,7*24*60*60*1000):dedupeMs;})();
   const keys=persisted.keys;
@@ -359,7 +360,7 @@ export function createNotifyService({
           },sendTimeoutMs);
           timer.unref?.();
         });
-        const call=Promise.resolve().then(()=>sender({title:message.title,body:message.body,config:resolved,signal:controller.signal}));
+        const call=Promise.resolve().then(()=>senderFn({title:message.title,body:message.body,config:resolved,signal:controller.signal}));
         return await Promise.race([call,timeout,cancelled]);
       }catch(error){
         lastError=error;
