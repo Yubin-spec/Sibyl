@@ -6,7 +6,7 @@ import {randomUUID} from 'node:crypto';
 
 const backupOnce=async path=>{await copyFile(path,path+'.ai-bridge-backup',constants.COPYFILE_EXCL).catch(e=>{if(e.code!=='EEXIST')throw e;});};
 const writeAtomic=async(path,data)=>{const temp=path+'.'+randomUUID()+'.tmp';try{await writeFile(temp,data,{mode:0o600,flag:'wx'});await rename(temp,path);}finally{await rm(temp,{force:true});}};
-const HOOK_EVENTS=[['Stop',null,'stop'],['PreToolUse','Edit|Write|MultiEdit|NotebookEdit','pre-tool']];
+const HOOK_EVENTS=[['SessionStart',null,'session-start'],['UserPromptSubmit',null,'user-prompt'],['Stop',null,'stop'],['PreToolUse','Edit|Write|MultiEdit|NotebookEdit','pre-tool']];
 const normalizePath=value=>String(value??'').replace(/\\/g,'/');
 const quote=value=>'"'+String(value).replace(/"/g,'\\"')+'"';
 function hookCommand({nodePath,hookScript,dir,event}){

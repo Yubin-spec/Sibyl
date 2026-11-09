@@ -73,6 +73,14 @@ test('Claude hooks merge, stay idempotent and preserve unrelated settings',async
   const oursPre=config.hooks.PreToolUse.flatMap(group=>group.hooks).filter(hook=>hook.command.includes('sibyl-hook.mjs'));
   assert.equal(oursPre.length,1);
   assert.match(oursPre[0].command,/--event pre-tool/);
+  const oursStart=config.hooks.SessionStart.flatMap(group=>group.hooks).filter(hook=>hook.command.includes('sibyl-hook.mjs'));
+  assert.equal(oursStart.length,1);
+  assert.match(oursStart[0].command,/--event session-start/);
+  const oursPrompt=config.hooks.UserPromptSubmit.flatMap(group=>group.hooks).filter(hook=>hook.command.includes('sibyl-hook.mjs'));
+  assert.equal(oursPrompt.length,1);
+  assert.match(oursPrompt[0].command,/--event user-prompt/);
+  assert.ok(config.hooks.SessionStart.every(group=>group.matcher===undefined));
+  assert.ok(config.hooks.UserPromptSubmit.every(group=>group.matcher===undefined));
   assert.ok(config.hooks.PreToolUse.some(group=>group.matcher==='Bash'));
   await mod.configureNativeTool(options);
   assert.equal(await readFile(settings,'utf8'),JSON.stringify(config,null,2)+'\n');

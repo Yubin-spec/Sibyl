@@ -5,7 +5,23 @@ import {pathToFileURL} from 'node:url';
 import {parseArgs} from 'node:util';
 
 const PROTOCOL = 'plan-review/v1';
+const CONTEXT_PROTOCOL = 'hook-context/v1';
 const EDIT_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+
+async function contextEnabled(dir) {
+  try {
+    const value = JSON.parse(await readFile(join(dir, 'hook-context.json'), 'utf8'));
+    return value?.enabled !== false;
+  } catch {
+    return true;
+  }
+}
+
+function contextOutput(event, value) {
+  const text = typeof value?.text === 'string' ? value.text.trim() : '';
+  if (!text) return {};
+  return {hookSpecificOutput: {hookEventName: event, additionalContext: text}};
+}
 
 function noticeFor(error) {
   return /protocol/i.test(error?.message ?? '')
@@ -68,6 +84,36 @@ export async function decidePreTool(input = {}, call = request) {
   }
 }
 
+export async function decideSessionStart(input = {}, call = request, {enabled = true} = {}) {
+  if (!enabled) return {};
+  try {
+    const value = await call('/hook/context', {
+      protocol: CONTEXT_PROTOCOL,
+      event: 'session-start',
+      projectPath: input.cwd || process.cwd(),
+      ...(typeof input.session_id === 'string' && input.session_id ? {nativeSessionId: input.session_id} : {})
+    }, 1500);
+    return contextOutput('SessionStart', value);
+  } catch {
+    return {};
+  }
+}
+
+export async function decideUserPrompt(input = {}, call = request, {enabled = true} = {}) {
+  if (!enabled) return {};
+  try {
+    const value = await call('/hook/context', {
+      protocol: CONTEXT_PROTOCOL,
+      event: 'user-prompt',
+      projectPath: input.cwd || process.cwd(),
+      ...(typeof input.session_id === 'string' && input.session_id ? {nativeSessionId: input.session_id} : {})
+    }, 700);
+    return contextOutput('UserPromptSubmit', value);
+  } catch {
+    return {};
+  }
+}
+
 async function readStdin() {
   if (process.stdin.isTTY) return '';
   let raw = '';
@@ -85,19 +131,24 @@ export async function main(argv = process.argv.slice(2)) {
     },
     strict: true
   });
+  const events = ['stop', 'pre-tool', 'session-start', 'user-prompt'];
   if (values.help) {
-    console.log('node scripts/sibyl-hook.mjs --dir <dataDir> --event stop|pre-tool');
+    console.log('node scripts/sibyl-hook.mjs --dir <dataDir> --event stop|pre-tool|session-start|user-prompt');
     return;
   }
-  if (!values.dir || !['stop', 'pre-tool'].includes(values.event)) throw Error('--dir and --event stop|pre-tool are required');
+  if (!values.dir || !events.includes(values.event)) throw Error('--dir and --event stop|pre-tool|session-start|user-prompt are required');
   let input = {};
   try {
     input = JSON.parse(await readStdin() || '{}');
   } catch {
     input = {};
   }
-  const call = (path, body) => request(values.dir, path, body);
-  const output = values.event === 'stop' ? await decideStop(input, call) : await decidePreTool(input, call);
+  const call = (path, body, timeoutMs) => request(values.dir, path, body, timeoutMs);
+  const enabled = ['stop', 'pre-tool'].includes(values.event) ? true : await contextEnabled(values.dir);
+  const output = values.event === 'stop' ? await decideStop(input, call)
+    : values.event === 'pre-tool' ? await decidePreTool(input, call)
+    : values.event === 'session-start' ? await decideSessionStart(input, call, {enabled})
+    : await decideUserPrompt(input, call, {enabled});
   process.stdout.write(JSON.stringify(output));
 }
 
