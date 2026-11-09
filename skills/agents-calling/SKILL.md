@@ -81,14 +81,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File start-browser.ps1 -Page obse
 **模型选择：** 默认 `model:"auto"`，不要手动指定。用 `kind` 和 `risk` 告诉 daemon 任务形状：
 
 - `kind:"mechanical"`（改名、格式、文档小修）→ 便宜快的 `gpt-6-luna` + low；
-- `kind:"review"` + `risk:"normal"`（普通评审）→ `gpt-6.1-terra` + medium；
-- `kind:"review"` + `risk:"high"`（并发/租约/持久化/安全/不可逆）→ `gpt-6.1-sol` + high；
+- `kind:"review"`（普通或高风险评审）→ `gpt-6-astra` + ultra；这是评审专用最高档，更贵更慢，默认就是它；
 - `kind:"implement"` → `gpt-6.1-sol` + medium，`risk:"high"` 时 high；
 - `kind:"frontier"`（确实很难、前几次都失败）→ `gpt-6-astra` + high。
 
 只有人明确要求换模型时才传 `model`；`bridge_worker_result`/`bridge_worker_list` 会回显实际使用的 `model` 和 `effort`。
 
-**项目覆盖：** 项目的 `.sibyl/models.json` 可以覆盖上表任意一档，只写需要改的 `model` / `effort`，其余沿用默认。优先级为「显式 `model` > 项目配置 > 默认表」，命中项目配置时 `modelReason` 带 `project:` 前缀。配置非法会让 worker 启动直接失败并给出文件路径与字段，不要靠改默认表绕过。计划评审 worker 不走项目路由表；要换评审模型，只能用计划评审配置的 `reviewerModel` / `reviewerFinalModel`。
+**项目覆盖：** 项目的 `.sibyl/models.json` 可以覆盖上表任意一档，只写需要改的 `model` / `effort`，其余沿用默认。降档时 `model` 与 `effort` 要成对写（例如 `gpt-6-luna` + `high`）；默认 `ultra` 不被 Luna 系列支持，只写 `model` 会在加载时报错。优先级为「显式 `model` > 项目配置 > 默认表」，命中项目配置时 `modelReason` 带 `project:` 前缀。配置非法会让 worker 启动直接失败并给出文件路径与字段，不要靠改默认表绕过。计划评审 worker 不走项目路由表；要换评审模型，只能用计划评审配置的 `reviewerModel` / `reviewerFinalModel` / `reviewerEffort`，默认是 `gpt-6-astra` / ultra，降到不支持 ultra 的模型时要同时指定兼容的 effort。
 
 **规则：**
 
