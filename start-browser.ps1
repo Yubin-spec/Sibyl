@@ -1,6 +1,6 @@
 param([switch]$Stop, [switch]$NoOpen, [string]$DataDir, [string]$Page, [string]$Port)
 $ErrorActionPreference = 'Stop'
-if (-not $DataDir) { $DataDir = 'D:\LXY_workspace\AI Bridge\data' }
+if (-not $DataDir) { $DataDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'data' }
 $taskCandidates = @()
 if ($env:SIBYL_NODE) { $taskCandidates += $env:SIBYL_NODE }
 $taskCandidates += (Join-Path $PSScriptRoot '..\.tools\node26\node-v26.13.0-win-x64\node.exe')
