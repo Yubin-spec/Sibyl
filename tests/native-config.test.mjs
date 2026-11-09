@@ -27,11 +27,12 @@ test('native connector configuration preserves unrelated MCP settings and adds n
   const cursorRule=await readFile(b.rulesPath,'utf8');
   assert.match(cursorRule,/alwaysApply: true/);
   assert.match(cursorRule,/Agents Calling bridge is available through MCP/);
+  assert.match(b.instructions,/bridge_consult/);
   const permissions=JSON.parse(await readFile(b.permissionsPath,'utf8'));
   assert.equal(permissions.extra,true);
   assert.deepEqual(permissions.permissions.deny,['Shell(rm)']);
   assert.ok(permissions.permissions.allow.includes('Shell(ls)'));
-  for(const name of ['bridge_context','bridge_list_peers','bridge_list_sessions'])
+  for(const name of ['bridge_context','bridge_list_peers','bridge_list_sessions','bridge_open_session','bridge_consult','bridge_consult_result','bridge_consult_stop'])
    assert.ok(permissions.permissions.allow.includes(`Mcp(ai-bridge:${name})`));
   const permissionsText=await readFile(b.permissionsPath,'utf8');
   await mod.configureNativeTool({project,tool:'cursor',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'});
@@ -99,6 +100,7 @@ test('DeepSeek Harness configuration appends one desktop MCP entry and stays ide
   assert.match(text,/serverName: ai-bridge/);
   assert.match(text,/"--tool"/);
   assert.match(text,/"deepseek"/);
+  assert.match(result.instructions,/projectPath/);
   assert.ok(text.includes(JSON.stringify('/private/bridge-data')));
   assert.doesNotMatch(text,/^\s*cwd:/m);
   assert.match(await readFile(configPath+'.ai-bridge-backup','utf8'),/ui-chat/);

@@ -111,3 +111,17 @@ test('bridge_context exposes saved targets before session registration',async()=
   assert.match(context.guidance.trigger,/proactively/);
  }finally{await mcp.close();await inbox.close();await rm(dir,{recursive:true,force:true});}
 });
+
+test('DeepSeek can report its workspace when the MCP process starts outside it',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'bridge-mcp-deepseek-workspace-'));
+ const workspace=await mkdtemp(join(tmpdir(),'bridge-mcp-workspace-'));
+ const inbox=await openNativeInbox({dir,context:async({session})=>({projectPath:session.projectPath})});
+ const mcp=client(dir,'deepseek');
+ try{
+  const preview=await mcp.tool('bridge_context',{projectPath:workspace});
+  assert.equal(preview.projectPath,workspace);
+  const source=await mcp.tool('bridge_open_session',{title:'DeepSeek task',projectPath:workspace});
+  const context=await mcp.tool('bridge_context',{sessionId:source.id});
+  assert.equal(context.projectPath,workspace);
+ }finally{await mcp.close();await inbox.close();await rm(dir,{recursive:true,force:true});await rm(workspace,{recursive:true,force:true});}
+});

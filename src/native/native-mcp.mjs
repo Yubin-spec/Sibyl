@@ -47,14 +47,14 @@ const readOnlyTools = new Set([
 const definitions = [
   [
     "bridge_open_session",
-    "Register THIS conversation with a distinct handle. Call once at the start of a task. Keep its returned session ID in this conversation; do not use another chat’s ID. nativeSessionId is optional self-reported metadata, not automatic attachment.",
-    { title: str, projectId: str, nativeSessionId: str },
+    "Register THIS conversation with a distinct handle. Call once at the start of a task. Keep its returned session ID in this conversation; do not use another chat’s ID. nativeSessionId is optional self-reported metadata, not automatic attachment. When the MCP host runs this server outside the active workspace, such as DeepSeek Harness, pass projectPath as the current workspace.",
+    { title: str, projectId: str, projectPath: str, nativeSessionId: str },
     ["title"],
   ],
   [
     "bridge_context",
-    "Call before bridge_open_session when a task may touch a module owned by another AI tool or a cross-project contract. Without sessionId, returns saved cross-tool targets for this tool and working directory without registering a session. With sessionId, returns the registered conversation context. Use the result to decide whether communication is warranted; it does not start work or send messages.",
-    { sessionId: str },
+    "Call before bridge_open_session when a task may touch a module owned by another AI tool or a cross-project contract. Without sessionId, returns saved cross-tool targets for this tool and working directory without registering a session. With sessionId, returns the registered conversation context. Use the result to decide whether communication is warranted; it does not start work or send messages. When the MCP host runs this server outside the active workspace, such as DeepSeek Harness, pass projectPath as the current workspace.",
+    { sessionId: str, projectPath: str },
     [],
   ],
   [
@@ -341,7 +341,14 @@ async function tool(name, args, signal) {
   if (name === "bridge_open_session") {
     const s = await local(
       "/register",
-      { ...args, tool: values.tool, projectPath: process.cwd() },
+      {
+        ...args,
+        tool: values.tool,
+        // DSH 从 profile 目录启动 MCP，无法继承聊天工作区；调用方可显式覆盖。
+        projectPath: args.projectPath
+          ? resolve(args.projectPath)
+          : process.cwd(),
+      },
       signal,
     );
     sessions.set(s.id, s);
@@ -380,7 +387,12 @@ async function tool(name, args, signal) {
     if (args.sessionId === undefined)
       return local(
         "/context",
-        { tool: values.tool, projectPath: process.cwd() },
+        {
+          tool: values.tool,
+          projectPath: args.projectPath
+            ? resolve(args.projectPath)
+            : process.cwd(),
+        },
         signal,
       );
     const registered = own(args.sessionId);
@@ -530,7 +542,7 @@ async function handle(message) {
         capabilities: { tools: {} },
         serverInfo: { name: "ai-bridge", version: "0.5.0" },
         instructions:
-          "Agents Calling is available. Stay within the human-approved task. When a task touches a module owned by another AI tool, a cross-project contract, or needs cross-tool verification, call bridge_context before deciding whether to communicate; it works before bridge_open_session and does not register a session. Do not call the bridge merely because it exists. If the context shows a useful target and communication is warranted, call bridge_open_session once, then bridge_consult with that tool; do not ask the human to relay. The bridge routes by saved project binding, starts an isolated read-only Worker, and returns consultId immediately. Keep the consultId and use bridge_consult_result; never resubmit. Use bridge_consult_stop only for that Worker. For explicitly registered original conversations on paired computers, use bridge_list_peers, bridge_list_sessions, bridge_ask, bridge_receive, and bridge_reply. The Worker is never the target original chat.",
+          "Agents Calling is available. Stay within the human-approved task. When a task touches a module owned by another AI tool, a cross-project contract, or needs cross-tool verification, call bridge_context before deciding whether to communicate; it works before bridge_open_session and does not register a session. Do not call the bridge merely because it exists. If the MCP host runs this server outside the active workspace, such as DeepSeek Harness, pass projectPath as the current workspace to bridge_context and bridge_open_session. If the context shows a useful target and communication is warranted, call bridge_open_session once, then bridge_consult with that tool; do not ask the human to relay. The bridge routes by saved project binding, starts an isolated read-only Worker, and returns consultId immediately. Keep the consultId and use bridge_consult_result; never resubmit. Use bridge_consult_stop only for that Worker. For explicitly registered original conversations on paired computers, use bridge_list_peers, bridge_list_sessions, bridge_ask, bridge_receive, and bridge_reply. The Worker is never the target original chat.",
       };
     else if (message.method === "ping") result = {};
     else if (message.method === "tools/list") result = { tools: definitions };
