@@ -28,5 +28,6 @@
 .env.*
 !.env.example
 /.notify.json
+/notify-state.json*
 /.claude/settings.local.json
 /.sibyl/

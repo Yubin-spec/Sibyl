@@ -17,10 +17,11 @@ import {runChannel} from './channel.mjs';
 import {latestRelease,updateInfo} from './update.mjs';
 import {DEFAULT_CONSULT_LIMITS,normalizeConsultLimits,normalizeWorkerLimits,consultFingerprint,findDuplicate,checkBudget,checkParallel,checkProgress} from './consult-policy.mjs';
 import {attentionItems} from './attention.mjs';
+import {createNotifyService} from './notify-service.mjs';
 const source=fileURLToPath(new URL('.',import.meta.url));
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const version=JSON.parse(await readFile(new URL('./package.json',import.meta.url),'utf8')).version;
-export async function createControl({dir=defaultDataDir(),onShutdown,detect=detectAgents,runner=(prompt,session,signal,project,agent,options)=>agentRunner(agent,prompt,session,signal,project,options),healthInterval=15000,consultLimits={},workerLimits={},workerScripts,workerOrphanGraceMs=10*60*1000,sessionAlive,planReviewConfig={},focusThread,readConstraints,planReviewReconcileMs=30000}={}) {
+export async function createControl({dir=defaultDataDir(),onShutdown,detect=detectAgents,runner=(prompt,session,signal,project,agent,options)=>agentRunner(agent,prompt,session,signal,project,options),healthInterval=15000,consultLimits={},workerLimits={},workerScripts,workerOrphanGraceMs=10*60*1000,sessionAlive,planReviewConfig={},focusThread,readConstraints,planReviewReconcileMs=30000,notify={}}={}) {
  await mkdir(join(dir,'connections'),{recursive:true,mode:0o700});
  let workerStart,workerTurn,workerResult,workerClose,workerAccept,workerList,workerCheck;
  let planReviewCheck,planReviewStart,planReviewResult,planReviewRespond,planReviewDecide,planReviewContinue,planReviewRecover,planReviewList,planReviews=null;
@@ -41,11 +42,14 @@ export async function createControl({dir=defaultDataDir(),onShutdown,detect=dete
  const consultList=()=>[...consultJobs.values()].sort((a,b)=>String(b.startedAt).localeCompare(String(a.startedAt))).slice(0,100).map(publicConsult);
  const state=(compact=false)=>{const s=store.snapshot(),attention=attentionItems({requests:[...requests.values()],consultations:[...consultJobs.values()],conversations:s.conversations,projects:s.projects,dismissed:s.settings?.dismissedAttention||[]});return {name:s.device.name,...s,attention,nativeSessions:nativeInbox?.catalog()||[],nativeInbox:(()=>{const n=nativeInbox.snapshot();return {...n,questions:n.questions.slice(-100)};})(),agents,toolsLoading,consultLimits:limits,consultations:consultList(),workers:workers.list({all:true}),planReviews:planReviews?planReviews.state():[],addresses:addresses(),host:host?{code:host.pairing.code,port:host.port,project:host.project,requests:[...requests.values()],peers:Object.values(host.state.peers).map(({id,name,deviceId})=>({id,name,deviceId}))}:null,connections:[...connections.values()],conversations:s.conversations.map(c=>({...c,...(c.connectionId.startsWith('incoming:')?{incoming:true,direction:'incoming'}:{})})),operations:operations.map(o=>publicOperation(o,compact)),operation:operations.length?publicOperation(operations.at(-1),compact):null,revision};};
  const emit=event=>{const data=`data: ${JSON.stringify(event)}\n\n`;for(const res of streams){if(res.writableLength>1000000){res.destroy();streams.delete(res);}else res.write(data);}};
- const changed=()=>{if(closed)return;revision++;emit({type:'state',state:state(true)});};
+ const notifier=createNotifyService({enabled:notify.enabled===true,sender:notify.sender,config:notify.config,configPath:notify.configPath,statePath:notify.statePath??join(dir,'notify-state.json'),dedupeMs:notify.dedupeMs,sendTimeoutMs:notify.sendTimeoutMs,now:notify.now,retryDelayMs:notify.retryDelayMs,maxAttempts:notify.maxAttempts,maxQueue:notify.maxQueue,onError:notify.onError});
+ let notificationsReady=false;
+ const changed=()=>{if(closed)return;revision++;const snapshot=state(true);emit({type:'state',state:snapshot});if(notificationsReady)notifier.observe(snapshot);};
  const workers=createWorkerService({dataDir:dir,store,limits:normalizedWorkerLimits,scripts:workerScripts,onChange:changed,sessionAlive:sessionAlive??(id=>nativeInbox.catalog().some(session=>session.id===id&&session.status==='available')),orphanGraceMs:workerOrphanGraceMs});
  planReviews=createPlanReviewService({store,workers,config:planReviewConfig,focusThread,readConstraints,reconcileMs:planReviewReconcileMs,onChange:changed});
  planReviewCheck=i=>planReviews.check(i);planReviewStart=i=>planReviews.start(i);planReviewResult=i=>planReviews.result(i);planReviewRespond=i=>planReviews.respond(i);planReviewDecide=i=>planReviews.decide(i);planReviewContinue=i=>planReviews.continueReview(i);planReviewRecover=i=>planReviews.recover(i);planReviewList=i=>planReviews.list(i);
  await planReviews.resume();
+ notifier.seed(state(true));notificationsReady=true;
  workerStart=input=>{if(workersClosing)throw Error('Daemon is shutting down');return workers.start(input);};
  workerTurn=input=>workers.turn(input);
  workerResult=input=>workers.result(input);
@@ -141,13 +145,13 @@ consultStart=async({session,tool,projectId,text})=>{
  try{const cached=JSON.parse(await readFile(join(dir,'agents-cache.json'),'utf8'));if(toolsLoading)Object.assign(agents,cached);}catch{};
  const detection=Promise.resolve().then(detect).then(async found=>{if(closed)return;for(const key of Object.keys(agents))delete agents[key];Object.assign(agents,found||{});await writeFile(join(dir,'agents-cache.json'),JSON.stringify(agents),{mode:0o600});}).catch(()=>{}).finally(()=>{toolsLoading=false;changed();if(!closed&&store.snapshot().settings.autoStartHost&&!host)startHost({projectId:store.snapshot().settings.selectedProjectId||undefined}).catch(()=>{});});
  const heartbeat=setInterval(()=>{for(const id of connections.keys())refresh(id).catch(()=>{});for(const res of streams)res.write(': keepalive\n\n');},healthInterval);heartbeat.unref();
- return {server,csrf,store,async close(){planReviews?.close();workersClosing=true;closed=true;clearInterval(heartbeat);await workers.closeAll();await workers.stop();await stop().catch(()=>{});for(const res of streams)res.end();streams.clear();if(host){host.cancel();await new Promise(r=>host.server.close(r));}await Promise.allSettled(operations.map(o=>o.promise));await Promise.allSettled([...refreshing.values()]);await saveQueue;await nativeInbox.close();await new Promise(r=>server.close(r));store.close();}};
+ return {server,csrf,store,notifications:notifier,async close(){notifier.close();planReviews?.close();workersClosing=true;closed=true;clearInterval(heartbeat);await workers.closeAll();await workers.stop();await stop().catch(()=>{});for(const res of streams)res.end();streams.clear();if(host){host.cancel();await new Promise(r=>host.server.close(r));}await Promise.allSettled(operations.map(o=>o.promise));await Promise.allSettled([...refreshing.values()]);await saveQueue;await nativeInbox.close();await new Promise(r=>server.close(r));store.close();}};
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
  const dir=process.argv[2]||defaultDataDir(),runtimeFile=join(dir,'browser-runtime.json');
  let closing=false;
  const shutdown=async()=>{if(closing)return;closing=true;try{await control.close();const record=JSON.parse(await readFile(runtimeFile,'utf8').catch(()=>'{}'));if(record.pid===process.pid)await rm(runtimeFile,{force:true});process.exit(0);}catch(e){console.error(e.message);process.exit(1);}};
- const control=await createControl({dir,onShutdown:shutdown});
+ const control=await createControl({dir,onShutdown:shutdown,notify:{enabled:true}});
  const preferred=Number(process.env.SIBYL_UI_PORT||DEFAULT_UI_PORT);
  const port=await listenLoopback(control.server,Number.isInteger(preferred)?preferred:DEFAULT_UI_PORT);
  const url=`http://127.0.0.1:${port}`; await writeFile(runtimeFile,JSON.stringify({pid:process.pid,url}),{mode:0o600});
