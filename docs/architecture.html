@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Bridge / Sibyl 架构图</title>
+<style>
+  :root{
+    --ink:#1c1c1e; --muted:#6e6e73; --line:#dfe4ee; --blue:#007aff;
+    --lane:#f7f9fc; --card:#ffffff; --chip:#eef3fb; --bg:#eef1f6;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:40px 32px 56px; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif;
+  }
+  .sheet{
+    max-width:1480px; margin:0 auto; background:#fff; border:1px solid var(--line);
+    border-radius:20px; padding:34px 36px 28px; box-shadow:0 18px 50px rgba(28,34,54,.08);
+  }
+  header{display:flex; align-items:flex-end; justify-content:space-between; gap:28px; flex-wrap:wrap; margin-bottom:20px}
+  h1{margin:0 0 6px; font-size:27px; letter-spacing:.2px}
+  .sub{margin:0; color:var(--muted); font-size:13.5px; line-height:1.6}
+  .badges{display:flex; gap:8px; flex-wrap:wrap}
+  .badge{
+    font:600 11.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace; color:#31507e;
+    background:var(--chip); border:1px solid #dbe6f8; border-radius:999px; padding:7px 11px;
+  }
+  .legend{display:flex; gap:22px; flex-wrap:wrap; align-items:center; margin:4px 0 12px; color:var(--muted); font-size:12px}
+  .legend span{display:inline-flex; align-items:center; gap:8px}
+  .legend i{display:inline-block; width:34px; height:0; border-top:2px solid #5b6b8c}
+  .legend i.dash{border-top:2px dashed #8a96ad}
+  .legend i.blue{border-top:2px solid var(--blue)}
+  .legend i.double{position:relative}
+  .legend i.double::after{content:""; position:absolute; right:-1px; top:-4px; border:4px solid transparent; border-left-color:#5b6b8c}
+  svg{width:100%; height:auto; display:block}
+  .foot{margin-top:18px; color:var(--muted); font-size:12px; line-height:1.7; display:flex; justify-content:space-between; gap:24px; flex-wrap:wrap}
+  .foot code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; color:#42506b}
+  @media (max-width:900px){
+    body{padding:18px 12px 32px}
+    .sheet{padding:22px 16px 18px; border-radius:14px}
+    h1{font-size:22px}
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <header>
+    <div>
+      <h1>AI Bridge / Sibyl 架构图</h1>
+      <p class="sub">v0.5.0 · 同一台电脑或已配对电脑之间的 AI 工具协作桥 · 扁平模块布局（无 <code>src/</code>）</p>
+    </div>
+    <div class="badges">
+      <span class="badge">Node 26 · 零第三方依赖</span>
+      <span class="badge">MCP stdio</span>
+      <span class="badge">SQLite</span>
+      <span class="badge">LAN HTTP + Bearer</span>
+    </div>
+  </header>
+
+  <div class="legend">
+    <span><i></i>调用 / 数据流</span>
+    <span><i class="dash"></i>托管 / 生命周期</span>
+    <span><i class="blue"></i>本地 UI 通道</span>
+    <span><i class="double"></i>双向协议</span>
+  </div>
+
+  <svg viewBox="0 0 1440 1210" role="img" aria-label="AI Bridge 分层架构图">
+    <defs>
+      <marker id="a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#5b6b8c"/>
+      </marker>
+      <marker id="ad" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#8a96ad"/>
+      </marker>
+      <marker id="ab" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#007aff"/>
+      </marker>
+      <marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#5b6b8c"/>
+      </marker>
+      <style>
+        .lane{fill:#f7f9fc;stroke:#e3e8f2;stroke-width:1.2}
+        .lane-label{font-size:11.5px;font-weight:700;letter-spacing:.12em;fill:#8a96ad;font-family:inherit}
+        .card{fill:#fff;stroke:#dfe4ee;stroke-width:1.2}
+        .card-accent{fill:#f4f8ff;stroke:#cfe0ff;stroke-width:1.3}
+        .t{font-size:14px;font-weight:650;fill:#1c1c1e;font-family:inherit}
+        .s{font-size:11.5px;fill:#6e6e73;font-family:inherit}
+        .m{font-size:11px;fill:#5b6b8c;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+        .edge{fill:none;stroke:#5b6b8c;stroke-width:1.6;marker-end:url(#a)}
+        .edge-both{fill:none;stroke:#5b6b8c;stroke-width:1.6;marker-start:url(#aa);marker-end:url(#a)}
+        .edge-dash{fill:none;stroke:#8a96ad;stroke-width:1.5;stroke-dasharray:6 5;marker-end:url(#ad)}
+        .edge-blue{fill:none;stroke:#007aff;stroke-width:1.8;marker-start:url(#ab);marker-end:url(#ab)}
+        .elabel{font-size:11px;fill:#6e6e73;font-family:inherit}
+        .chip{fill:#eef3fb;stroke:#dbe6f8;stroke-width:1}
+      </style>
+    </defs>
+
+    <!-- ================= ① 外部工具与会话 ================= -->
+    <rect class="lane" x="20" y="20" width="1400" height="150" rx="16"/>
+    <text class="lane-label" x="42" y="46">① 外部工具与会话</text>
+
+    <rect class="card" x="40" y="64" width="250" height="86" rx="12"/>
+    <text class="t" x="165" y="91" text-anchor="middle">Claude Code 原会话</text>
+    <text class="s" x="165" y="112" text-anchor="middle">MCP 客户端</text>
+    <text class="s" x="165" y="132" text-anchor="middle">Stop / PreToolUse hooks</text>
+
+    <rect class="card" x="310" y="64" width="250" height="86" rx="12"/>
+    <text class="t" x="435" y="91" text-anchor="middle">Codex 原会话</text>
+    <text class="s" x="435" y="112" text-anchor="middle">MCP 客户端</text>
+    <text class="s" x="435" y="132" text-anchor="middle">工作方线程 / 计划评审</text>
+
+    <rect class="card" x="580" y="64" width="250" height="86" rx="12"/>
+    <text class="t" x="705" y="91" text-anchor="middle">Cursor 原会话</text>
+    <text class="s" x="705" y="112" text-anchor="middle">MCP 客户端</text>
+    <text class="s" x="705" y="132" text-anchor="middle">登记 / 收信 / 回复</text>
+
+    <rect class="card" x="850" y="64" width="250" height="86" rx="12"/>
+    <text class="t" x="975" y="91" text-anchor="middle">专用 CLI 会话</text>
+    <text class="s" x="975" y="112" text-anchor="middle">codex / claude 子进程</text>
+    <text class="s" x="975" y="132" text-anchor="middle">每任务独立上下文</text>
+
+    <rect class="card" x="1120" y="64" width="280" height="86" rx="12"/>
+    <text class="t" x="1260" y="91" text-anchor="middle">另一台电脑</text>
+    <text class="s" x="1260" y="112" text-anchor="middle">同样运行 AI Bridge</text>
+    <text class="s" x="1260" y="132" text-anchor="middle">配对后可发现项目与会话</text>
+
+    <!-- ================= ② 接入通道 ================= -->
+    <rect class="lane" x="20" y="200" width="1400" height="230" rx="16"/>
+    <text class="lane-label" x="42" y="226">② 接入通道</text>
+
+    <rect class="card" x="40" y="246" width="770" height="86" rx="12"/>
+    <text class="t" x="425" y="273" text-anchor="middle">native-mcp.mjs · MCP stdio 服务器</text>
+    <text class="s" x="425" y="294" text-anchor="middle">25 个 bridge_* 工具：登记 · 收信 · 问答 · 工作方 · 计划评审 · 租约</text>
+    <text class="s" x="425" y="314" text-anchor="middle">每个工具会话各带一个实例；进程启动即按工作目录自动登记</text>
+
+    <rect class="card" x="850" y="246" width="250" height="86" rx="12"/>
+    <text class="t" x="975" y="273" text-anchor="middle">agentRunner / spawn-*</text>
+    <text class="s" x="975" y="294" text-anchor="middle">bridge.mjs 专职 CLI 适配</text>
+    <text class="s" x="975" y="314" text-anchor="middle">注入项目、模型与环境</text>
+
+    <rect class="card" x="1120" y="246" width="280" height="86" rx="12"/>
+    <text class="t" x="1260" y="273" text-anchor="middle">bridge.mjs + pairing.mjs</text>
+    <text class="s" x="1260" y="294" text-anchor="middle">LAN HTTP · 8 位短码配对</text>
+    <text class="s" x="1260" y="314" text-anchor="middle">多机连接 · /native/* /catalog /jobs/*</text>
+
+    <rect class="card" x="40" y="354" width="770" height="66" rx="12"/>
+    <text class="t" x="425" y="379" text-anchor="middle">native-inbox.mjs · 原会话收件箱</text>
+    <text class="s" x="425" y="400" text-anchor="middle">回环 HTTP + Bearer：/register /ask /receive /reply /worker/* /plan-review/* /consult/*</text>
+
+    <!-- ================= ③ 本机控制进程 ================= -->
+    <rect class="lane" x="20" y="460" width="1400" height="370" rx="16"/>
+    <text class="lane-label" x="42" y="486">③ 本机控制进程 · NODE 26 · CONTROL.MJS</text>
+
+    <rect class="card-accent" x="40" y="508" width="300" height="92" rx="12"/>
+    <text class="t" x="190" y="535" text-anchor="middle">control.mjs · 本机控制核心</text>
+    <text class="m" x="190" y="557" text-anchor="middle">127.0.0.1 HTTP API + SSE</text>
+    <text class="s" x="190" y="578" text-anchor="middle">状态聚合 · 任务编排 · 更新检查</text>
+
+    <rect class="card" x="370" y="508" width="300" height="92" rx="12"/>
+    <text class="t" x="520" y="535" text-anchor="middle">channel.mjs · 频道协作</text>
+    <text class="s" x="520" y="557" text-anchor="middle">固定轮数 / agent 自主对话</text>
+    <text class="s" x="520" y="578" text-anchor="middle">消息持久化 · SSE 增量 · 定向取消</text>
+
+    <rect class="card" x="700" y="508" width="320" height="92" rx="12"/>
+    <text class="t" x="860" y="535" text-anchor="middle">workers.mjs · Worker Daemon</text>
+    <text class="s" x="860" y="557" text-anchor="middle">consult / dispatch / parallel</text>
+    <text class="s" x="860" y="578" text-anchor="middle">生命周期 · 看门狗 · 交工与验收</text>
+
+    <rect class="card" x="1050" y="508" width="350" height="92" rx="12"/>
+    <text class="t" x="1225" y="535" text-anchor="middle">plan-review.mjs · 计划评审</text>
+    <text class="s" x="1225" y="557" text-anchor="middle">声明 · canonical hash · verdict</text>
+    <text class="s" x="1225" y="578" text-anchor="middle">轮次 · 批准索引 · 死锁与恢复</text>
+
+    <rect class="card" x="40" y="630" width="300" height="76" rx="12"/>
+    <text class="t" x="190" y="656" text-anchor="middle">workspace.mjs · SQLite</text>
+    <text class="s" x="190" y="678" text-anchor="middle">projects / sessions / conversations / messages</text>
+
+    <rect class="card" x="370" y="630" width="300" height="76" rx="12"/>
+    <text class="t" x="520" y="656" text-anchor="middle">attention.mjs / consult-policy.mjs</text>
+    <text class="s" x="520" y="678" text-anchor="middle">待处理队列 · 预算 / 并发 / 无进展止损</text>
+
+    <rect class="card" x="700" y="630" width="320" height="76" rx="12"/>
+    <text class="t" x="860" y="656" text-anchor="middle">model-policy.mjs / worker-policy.mjs</text>
+    <text class="s" x="860" y="678" text-anchor="middle">auto 选模型 · kind / risk / effort · 派工提示词</text>
+
+    <rect class="card" x="1050" y="630" width="350" height="76" rx="12"/>
+    <text class="t" x="1225" y="656" text-anchor="middle">path-scope.mjs / worker-worktree.mjs</text>
+    <text class="s" x="1225" y="678" text-anchor="middle">路径租约 · 共享文件 · git worktree 隔离</text>
+
+    <rect class="chip" x="40" y="736" width="320" height="52" rx="10"/>
+    <text class="s" x="200" y="766" text-anchor="middle">runtime.mjs · 可执行文件 / 环境 / 回环监听</text>
+
+    <rect class="chip" x="390" y="736" width="320" height="52" rx="10"/>
+    <text class="s" x="550" y="766" text-anchor="middle">project-path.mjs · 项目路径规范化</text>
+
+    <rect class="chip" x="740" y="736" width="320" height="52" rx="10"/>
+    <text class="s" x="900" y="766" text-anchor="middle">worker-report.mjs · 交工报告与补丁</text>
+
+    <rect class="chip" x="1090" y="736" width="310" height="52" rx="10"/>
+    <text class="s" x="1245" y="766" text-anchor="middle">scripts/sibyl-hook.mjs · hooks（fail-open）</text>
+
+    <!-- ================= ④ 桌面外壳与界面 ================= -->
+    <rect class="lane" x="20" y="860" width="1400" height="150" rx="16"/>
+    <text class="lane-label" x="42" y="886">④ 桌面外壳与界面</text>
+
+    <rect class="card" x="40" y="910" width="340" height="86" rx="12"/>
+    <text class="t" x="210" y="937" text-anchor="middle">Desktop.swift（macOS）</text>
+    <text class="s" x="210" y="958" text-anchor="middle">AppKit · WKWebView</text>
+    <text class="s" x="210" y="978" text-anchor="middle">菜单栏 · 目录选择 · 后台生命周期</text>
+
+    <rect class="card" x="410" y="910" width="340" height="86" rx="12"/>
+    <text class="t" x="580" y="937" text-anchor="middle">browser.mjs（Windows 兼容）</text>
+    <text class="s" x="580" y="958" text-anchor="middle">本地浏览器启动</text>
+    <text class="s" x="580" y="978" text-anchor="middle">Tauri 2 + WebView2 是目标形态</text>
+
+    <rect class="card-accent" x="780" y="910" width="620" height="86" rx="12"/>
+    <text class="t" x="1090" y="937" text-anchor="middle">desktop.html / desktop.js / desktop.css</text>
+    <text class="s" x="1090" y="958" text-anchor="middle">七页应用：会话 · 运行台 · 观测 · 电脑</text>
+    <text class="s" x="1090" y="978" text-anchor="middle">本机 AI · 项目 · 设置</text>
+
+    <!-- ================= ⑤ 数据与外部服务 ================= -->
+    <rect class="lane" x="20" y="1040" width="1400" height="150" rx="16"/>
+    <text class="lane-label" x="42" y="1066">⑤ 数据与外部服务</text>
+
+    <rect class="card" x="40" y="1084" width="300" height="80" rx="12"/>
+    <text class="t" x="190" y="1110" text-anchor="middle">data/workspace.sqlite</text>
+    <text class="s" x="190" y="1132" text-anchor="middle">工作区 / 会话 / 消息 / 设置</text>
+
+    <rect class="card" x="370" y="1084" width="250" height="80" rx="12"/>
+    <text class="t" x="495" y="1110" text-anchor="middle">data/connections/*.json</text>
+    <text class="s" x="495" y="1132" text-anchor="middle">配对凭证 · Bearer token</text>
+
+    <rect class="card" x="650" y="1084" width="250" height="80" rx="12"/>
+    <text class="t" x="775" y="1110" text-anchor="middle">data/native-runtime.json</text>
+    <text class="s" x="775" y="1132" text-anchor="middle">回环 URL + token</text>
+
+    <rect class="card" x="930" y="1084" width="230" height="80" rx="12"/>
+    <text class="t" x="1045" y="1110" text-anchor="middle">GitHub Releases</text>
+    <text class="s" x="1045" y="1132" text-anchor="middle">检查 / 下载更新</text>
+
+    <rect class="card" x="1190" y="1084" width="210" height="80" rx="12"/>
+    <text class="t" x="1295" y="1110" text-anchor="middle">Hermes / 微信</text>
+    <text class="s" x="1295" y="1132" text-anchor="middle">可选里程碑通知</text>
+
+    <!-- ================= 连线 ================= -->
+    <!-- 原会话 → MCP stdio -->
+    <line class="edge" x1="165" y1="150" x2="165" y2="244"/>
+    <line class="edge" x1="435" y1="150" x2="435" y2="244"/>
+    <line class="edge" x1="705" y1="150" x2="705" y2="244"/>
+    <text class="elabel" x="450" y="202">MCP stdio</text>
+
+    <!-- 专用 CLI ↔ agentRunner -->
+    <line class="edge-both" x1="975" y1="150" x2="975" y2="244"/>
+    <text class="elabel" x="990" y="202">spawn / 输出</text>
+
+    <!-- 另一台电脑 ↔ 跨机桥 -->
+    <line class="edge-both" x1="1260" y1="150" x2="1260" y2="244"/>
+    <text class="elabel" x="1275" y="202">LAN HTTP · 配对</text>
+
+    <!-- MCP → 收件箱 -->
+    <line class="edge" x1="425" y1="332" x2="425" y2="352"/>
+    <text class="elabel" x="440" y="347">HTTP 回环 · Bearer</text>
+
+    <!-- 收件箱回调 daemon / 评审 -->
+    <polyline class="edge" points="600,420 600,444 860,444 860,504"/>
+    <text class="elabel" x="612" y="439">回调：worker / 计划评审 / 核对</text>
+
+    <!-- bridge 由 control 托管 -->
+    <line class="edge-dash" x1="1260" y1="332" x2="1260" y2="452"/>
+    <text class="elabel" x="1275" y="400">由 control.mjs 托管</text>
+
+    <!-- 控制核心读写 SQLite -->
+    <line class="edge-both" x1="190" y1="600" x2="190" y2="626"/>
+    <text class="elabel" x="205" y="618">读写</text>
+
+    <!-- 核心 → 频道协作 -->
+    <line class="edge" x1="340" y1="554" x2="366" y2="554"/>
+
+    <!-- 评审调用工作方 / 工作方使用租约与工作树 -->
+    <line class="edge" x1="1050" y1="536" x2="1024" y2="536"/>
+    <line class="edge" x1="1020" y1="570" x2="1046" y2="570"/>
+
+    <!-- UI ↔ 控制核心：本机 HTTP + SSE -->
+    <line class="edge-blue" x1="1180" y1="910" x2="1180" y2="834"/>
+    <text class="elabel" x="1164" y="852" text-anchor="end">HTTP /api/* + SSE（127.0.0.1）</text>
+
+    <!-- 外壳加载界面 -->
+    <line class="edge" x1="380" y1="953" x2="406" y2="953"/>
+    <line class="edge" x1="750" y1="953" x2="776" y2="953"/>
+  </svg>
+
+  <div class="foot">
+    <div>数据流要点：原会话经 MCP 工具 → 回环收件箱 → control 回调；跨机请求经 bridge 的 Bearer 鉴权转发；Worker 在独立 git worktree 中运行，由主导方验收后贴回补丁。</div>
+    <div><code>docs/architecture.html</code> · 基于当前 <code>feat/windows-support</code> 扁平布局</div>
+  </div>
+</div>
+</body>
+</html>

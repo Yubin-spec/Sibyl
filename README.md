@@ -30,7 +30,7 @@ AI_BRIDGE_NODE=/path/to/standalone/node npm run build
 
 ## 能力与验证边界
 
-- 六个页面：会话、运行台、电脑、本机 AI、项目、设置。
+- 七个页面：会话、运行台、观测、电脑、本机 AI、项目、设置。
 - 短码审批配对、同时连接多台电脑、双向状态同步和逐台撤销。
 - 多项目专用 CLI 讨论与频道协作：固定轮数或 agent 自主对话，收件侧线不打断主任务，消息持久化、SSE 增量更新和定向取消。
 - 可见的跨工具评审：默认用 `bridge_worker_start({tool:"codex",tier:"consult",prompt})` 新建只读 Codex 会话，讨论出现在桌面聊天列表；`bridge_ask` 只续接已有原会话，需对方收信。`bridge_consult` 保留为 legacy 后台核对，仅人明确同意时使用。

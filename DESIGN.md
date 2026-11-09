@@ -94,7 +94,7 @@ Use native buttons with explicit action labels. The MCP actions are equal neutra
 
 ### Navigation and data display
 
-Retain the five sidebar pages and their existing navigation. Original-session registration and received questions stay on 本机 AI, separately from managed CLI conversation history. Local original sessions require no computer pairing. Keep tool identity, delivery and reply states explicit.
+Retain the existing sidebar pages and their existing navigation. The observation page is read-only and adds no write controls. Original-session registration and received questions stay on 本机 AI, separately from managed CLI conversation history. Local original sessions require no computer pairing. Keep tool identity, delivery and reply states explicit.
 
 ### Forms and overlays
 
