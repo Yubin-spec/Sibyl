@@ -407,17 +407,29 @@ async function createNativeInbox({
         changed();
         return send(200, { ...publicSession(s), lease: s.lease });
       }
-      const s = own(body);
-      if (req.url === "/touch") return send(200, { ok: true });
+      // 上下文发现可以在登记会话前执行；它只读项目和绑定，不创建会话。
       if (req.url === "/context") {
+        const registered = body.id === undefined ? null : own(body);
+        if (
+          !registered &&
+          (!tools.has(body.tool) || !text(body.projectPath, 1024))
+        )
+          throw Error("Invalid context discovery");
         const value =
           typeof context === "function"
             ? await context({
-                session: { ...publicSession(s), projectPath: s.projectPath },
+                session: registered
+                  ? {
+                      ...publicSession(registered),
+                      projectPath: registered.projectPath,
+                    }
+                  : { tool: body.tool, projectPath: body.projectPath },
               })
             : { server: "ai-bridge" };
         return send(200, value);
       }
+      const s = own(body);
+      if (req.url === "/touch") return send(200, { ok: true });
       if (req.url === "/close") {
         sessions.delete(s.id);
         for (const q of questions)

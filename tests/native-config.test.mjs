@@ -12,8 +12,18 @@ test('native connector configuration preserves unrelated MCP settings and adds n
   const a=await mod.configureNativeTool({project,tool:'claude',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'});
   const config=JSON.parse(await readFile(a.configPath,'utf8'));assert.equal(config.extra,true);assert.equal(config.mcpServers.existing.command,'existing');
   assert.deepEqual(config.mcpServers['ai-bridge'].args,['/app/native-mcp.mjs','--dir','/private/bridge-data','--tool','claude']);
+  assert.equal(a.rulesPath,join(project,'CLAUDE.md'));
+  const claudeRule=await readFile(a.rulesPath,'utf8');
+  assert.match(claudeRule,/<<< Agents Calling bridge/);
+  assert.match(claudeRule,/bridge_context works before bridge_open_session/);
+  await mod.configureNativeTool({project,tool:'claude',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'});
+  assert.equal(await readFile(a.rulesPath,'utf8'),claudeRule);
   const b=await mod.configureNativeTool({project,tool:'cursor',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'});
   assert.equal(b.configPath,join(project,'.cursor','mcp.json'));
+  assert.equal(b.rulesPath,join(project,'.cursor','rules','agents-calling.mdc'));
+  const cursorRule=await readFile(b.rulesPath,'utf8');
+  assert.match(cursorRule,/alwaysApply: true/);
+  assert.match(cursorRule,/Agents Calling bridge is available through MCP/);
   assert.ok(!JSON.stringify(config).includes('token'));assert.match(a.instructions,/原会话/);
   await assert.rejects(mod.configureNativeTool({project,tool:'unknown',dir:'/data'}),/Unsupported/);
   await writeFile(join(project,'.mcp.json'),'{broken');
@@ -28,9 +38,11 @@ test('Codex configuration adds a user-level MCP server with narrow auto approval
  const configPath=join(home,'config.toml');
  try{
   await writeFile(configPath,'model = "existing"\n\n[model_providers.custom]\nname = "custom"\n');
+  await writeFile(join(home,'AGENTS.md'),'# Existing instructions\n');
   const result=await mod.configureNativeTool({project:home,tool:'codex',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs',codexConfigPath:configPath});
   const text=await readFile(configPath,'utf8');
   assert.equal(result.configPath,configPath);
+  assert.equal(result.rulesPath,join(home,'AGENTS.md'));
   assert.match(text,/\[mcp_servers\.ai-bridge\]/);
   assert.match(text,/default_tools_approval_mode = "approve"/);
   assert.match(text,/tool_timeout_sec = 120/);
@@ -39,8 +51,13 @@ test('Codex configuration adds a user-level MCP server with narrow auto approval
   assert.match(text,/\[model_providers\.custom\]/);
   assert.equal((text.match(/\[mcp_servers\.ai-bridge\]/g)||[]).length,1);
   assert.match(await readFile(configPath+'.ai-bridge-backup','utf8'),/model = "existing"/);
+  const agents=await readFile(result.rulesPath,'utf8');
+  assert.match(agents,/^# Existing instructions/m);
+  assert.equal((agents.match(/>>> Agents Calling bridge/g)||[]).length,1);
+  assert.match(await readFile(result.rulesPath+'.ai-bridge-backup','utf8'),/^# Existing instructions/m);
   await mod.configureNativeTool({project:home,tool:'codex',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs',codexConfigPath:configPath});
   assert.equal(await readFile(configPath,'utf8'),text);
+  assert.equal(await readFile(result.rulesPath,'utf8'),agents);
   await writeFile(configPath,'mcp_servers = { ai-bridge = {} }\n');
   await assert.rejects(mod.configureNativeTool({project:home,tool:'codex',dir:'/data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs',codexConfigPath:configPath}),/inline/);
   assert.equal(await readFile(configPath,'utf8'),'mcp_servers = { ai-bridge = {} }\n');
@@ -84,8 +101,10 @@ test('desktop-only configuration writes the desktop app config instead of a proj
  const home=await mkdtemp(join(tmpdir(),'bridge-desktop-home-'));
  try{
   const claudePath=join(home,'claude_desktop_config.json');
-  const claude=await mod.configureNativeTool({project,tool:'claude',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs',desktopOnly:true,desktopConfigPath:claudePath});
+  const claudeRulePath=join(home,'CLAUDE.md');
+  const claude=await mod.configureNativeTool({project,tool:'claude',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs',desktopOnly:true,desktopConfigPath:claudePath,rulePath:claudeRulePath});
   assert.equal(claude.configPath,claudePath);
+  assert.equal(claude.rulesPath,claudeRulePath);
   const claudeConfig=JSON.parse(await readFile(claudePath,'utf8'));
   assert.equal(claudeConfig.mcpServers['ai-bridge'].type,'stdio');
   assert.deepEqual(claudeConfig.mcpServers['ai-bridge'].args,['/app/native-mcp.mjs','--dir','/private/bridge-data','--tool','claude']);
@@ -95,8 +114,10 @@ test('desktop-only configuration writes the desktop app config instead of a proj
   await assert.rejects(readFile(join(project,'.mcp.json')),{code:'ENOENT'});
 
   const cursorPath=join(home,'cursor-mcp.json');
-  const cursor=await mod.configureNativeTool({project,tool:'cursor',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs',desktopOnly:true,desktopConfigPath:cursorPath});
+  const cursorRulePath=join(home,'cursor-rule.mdc');
+  const cursor=await mod.configureNativeTool({project,tool:'cursor',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs',desktopOnly:true,desktopConfigPath:cursorPath,rulePath:cursorRulePath});
   assert.equal(cursor.configPath,cursorPath);
+  assert.equal(cursor.rulesPath,cursorRulePath);
   assert.deepEqual(JSON.parse(await readFile(cursorPath,'utf8')).mcpServers['ai-bridge'].args.slice(-2),['--tool','cursor']);
   assert.match(cursor.instructions,/Cursor Desktop/);
   assert.match(cursor.instructions,/无需单独安装 Cursor CLI/);

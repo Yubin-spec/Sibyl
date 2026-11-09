@@ -48,9 +48,9 @@ const definitions = [
   ],
   [
     "bridge_context",
-    "Return Agents Calling availability, usage policy, and the saved cross-tool targets for THIS conversation. Call after bridge_open_session when the task may touch a module owned by another AI tool, before bridge_consult. It does not start any work.",
+    "Call before bridge_open_session when a task may touch a module owned by another AI tool or a cross-project contract. Without sessionId, returns saved cross-tool targets for this tool and working directory without registering a session. With sessionId, returns the registered conversation context. Use the result to decide whether communication is warranted; it does not start work or send messages.",
     { sessionId: str },
-    ["sessionId"],
+    [],
   ],
   [
     "bridge_list_peers",
@@ -340,7 +340,7 @@ async function tool(name, args, signal) {
     return {
       ...publicSession,
       notice:
-        "Keep this handle in this conversation. Call bridge_context next to see saved cross-tool targets. Sharing is active while this MCP process is alive; nativeSessionId is self-reported. Ask bridge_receive to read incoming questions here.",
+        "Keep this handle in this conversation. bridge_context can also be called before this step; use it to inspect saved cross-tool targets first. Sharing is active while this MCP process is alive; nativeSessionId is self-reported. Ask bridge_receive to read incoming questions here.",
     };
   }
 
@@ -366,10 +366,25 @@ async function tool(name, args, signal) {
   if (name === "bridge_list_sessions")
     return (await peer(args.connectionId))("/native/sessions");
 
-  // 所有后续操作都必须带本进程登记的 sessionId；不存在直接拒绝。
+  // 上下文查询允许在登记前执行，只按当前工具和 cwd 做只读发现，不创建会话。
+  if (name === "bridge_context") {
+    if (args.sessionId === undefined)
+      return local(
+        "/context",
+        { tool: values.tool, projectPath: process.cwd() },
+        signal,
+      );
+    const registered = own(args.sessionId);
+    return local(
+      "/context",
+      { id: registered.id, lease: registered.lease },
+      signal,
+    );
+  }
+
+  // 其余操作都必须带本进程登记的 sessionId；不存在直接拒绝。
   const session = own(args.sessionId),
     identity = { id: session.id, lease: session.lease };
-  if (name === "bridge_context") return local("/context", identity, signal);
   if (name === "bridge_receive")
     return local(
       "/receive",
@@ -506,7 +521,7 @@ async function handle(message) {
         capabilities: { tools: {} },
         serverInfo: { name: "ai-bridge", version: "0.5.0" },
         instructions:
-          "Agents Calling is available. Stay within the human-approved task. At the start of each conversation, call bridge_open_session once, then bridge_context to see saved cross-tool targets. If the current task touches a module owned by another listed AI tool and you need verification, proactively call bridge_consult with that tool; do not ask the human to relay. The bridge routes by saved project binding, starts an isolated read-only Worker, and returns consultId immediately. Keep the consultId and use bridge_consult_result; never resubmit. Use bridge_consult_stop only for that Worker. For explicitly registered original conversations on paired computers, use bridge_list_peers, bridge_list_sessions, bridge_ask, bridge_receive, and bridge_reply. The Worker is never the target original chat.",
+          "Agents Calling is available. Stay within the human-approved task. When a task touches a module owned by another AI tool, a cross-project contract, or needs cross-tool verification, call bridge_context before deciding whether to communicate; it works before bridge_open_session and does not register a session. Do not call the bridge merely because it exists. If the context shows a useful target and communication is warranted, call bridge_open_session once, then bridge_consult with that tool; do not ask the human to relay. The bridge routes by saved project binding, starts an isolated read-only Worker, and returns consultId immediately. Keep the consultId and use bridge_consult_result; never resubmit. Use bridge_consult_stop only for that Worker. For explicitly registered original conversations on paired computers, use bridge_list_peers, bridge_list_sessions, bridge_ask, bridge_receive, and bridge_reply. The Worker is never the target original chat.",
       };
     else if (message.method === "ping") result = {};
     else if (message.method === "tools/list") result = { tools: definitions };

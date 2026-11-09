@@ -157,23 +157,38 @@ test("bridge_context resolves the saved cross-tool target from the current proje
       targetProjectId: target.id,
     });
 
-    // 从 Source 项目启动 MCP 会话，上下文应只返回保存的目标。
+    // 从 Source 项目启动 MCP 会话，未登记时也应能只读返回保存的目标。
     mcp = mcpClient(dir, dir);
     await mcp.call("initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
       clientInfo: { name: "test", version: "1" },
     });
+    let preview = await mcp.tool("bridge_context");
+    for (let i = 0; i < 40 && preview.targets[0]?.available === null; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      preview = await mcp.tool("bridge_context");
+    }
+    assert.equal(preview.registered, false);
+    assert.deepEqual(preview.targets, [
+      {
+        tool: "claude",
+        projectId: target.id,
+        projectName: "Target",
+        available: true,
+      },
+    ]);
+    assert.equal(preview.caller.project.name, "Source");
+
+    // 真正决定通信后才登记，登记后的上下文仍保留同一套目标路由。
     const session = await mcp.tool("bridge_open_session", {
       title: "source task",
     });
     const context = await mcp.tool("bridge_context", {
       sessionId: session.id,
     });
-    assert.deepEqual(context.targets, [
-      { tool: "claude", projectId: target.id, projectName: "Target" },
-    ]);
-    assert.equal(context.caller.project.name, "Source");
+    assert.equal(context.registered, true);
+    assert.equal(context.caller.title, "source task");
     assert.match(context.guidance.routing, /saved project binding/);
   } finally {
     await mcp?.close();

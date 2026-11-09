@@ -55,21 +55,68 @@ const writeAtomic = async (path, data) => {
     await rm(temp, { force: true });
   }
 };
+
+// 触发规则只解决“什么时候想起来桥接”，不强制每次任务都调用。
+// 用固定标记包住托管块，重复配置只替换这一段，不碰用户已有指令。
+const bridgeRuleStart = "<!-- >>> Agents Calling bridge -->",
+  bridgeRuleEnd = "<!-- <<< Agents Calling bridge -->",
+  bridgeRule = [
+    bridgeRuleStart,
+    "Agents Calling bridge is available through MCP.",
+    "When this task touches a module owned by another AI tool, a cross-project contract, or needs cross-tool verification, call bridge_context before deciding whether to communicate. bridge_context works before bridge_open_session and does not register a session.",
+    "Do not call the bridge merely because it exists. If a useful target is returned and communication is warranted, call bridge_open_session once, then bridge_consult and follow the returned consultId.",
+    bridgeRuleEnd,
+    "",
+  ].join("\n");
+
+/**
+ * 把触发规则合并进用户或项目指令文件。
+ *
+ * 首次修改前保留 .ai-bridge-backup；已有托管标记时原位替换，
+ * 没有标记时追加到文件末尾，绝不改写用户原有内容。
+ */
+async function mergeBridgeRule(path, header = "") {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  let raw = "";
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (e) {
+    if (e.code !== "ENOENT")
+      throw Error("Cannot read instructions: " + e.message);
+  }
+  const start = raw.indexOf(bridgeRuleStart),
+    end = raw.indexOf(bridgeRuleEnd);
+  let next;
+  if (start >= 0 && end > start)
+    next =
+      raw.slice(0, start) +
+      bridgeRule +
+      raw.slice(end + bridgeRuleEnd.length).replace(/^\n+/, "");
+  else {
+    const prefix = raw.trimEnd();
+    next = (prefix ? prefix + "\n\n" : header) + bridgeRule;
+  }
+  if (next !== raw) {
+    if (raw) await backupOnce(path);
+    await writeAtomic(path, next);
+  }
+  return path;
+}
 const instructions = {
   claude:
-    "配置已写入。请在 Claude Code 原会话里用 /mcp 检查或重连 ai-bridge；若当前版本不能动态加载，续接原会话后再检查。让该会话先调用 bridge_open_session 登记，再调用 bridge_context 查看已保存的跨工具目标。发现另一个 AI 工具负责的模块需要核对时，应主动调用 bridge_consult 只传工具名，不要让人转述；未绑定才使用当前项目。收到原会话问题后用 bridge_receive 接收、bridge_reply 回答；询问方用 bridge_ask/bridge_result 或 bridge_consult/bridge_consult_result 继续任务。",
+    "配置已写入。请在 Claude Code 原会话里用 /mcp 检查或重连 ai-bridge；若当前版本不能动态加载，续接原会话后再检查。任务可能涉及另一个 AI 工具负责的模块或跨项目契约时，先调用 bridge_context 只读查看目标；它无需登记，也不会创建会话。确认值得通信后，再调用 bridge_open_session 并主动调用 bridge_consult，只传工具名，不要让人转述；未绑定才使用当前项目。收到原会话问题后用 bridge_receive 接收、bridge_reply 回答；询问方用 bridge_ask/bridge_result 或 bridge_consult/bridge_consult_result 继续任务。",
   cursor:
-    "配置已写入。请在 Cursor 的 MCP 设置启用 ai-bridge，回到原会话确认工具可见；必要时重新加载窗口并保留原聊天。如果使用 Cursor CLI，先在项目目录执行 cursor-agent mcp enable ai-bridge；无界面运行还要按 Cursor 的审批策略允许 ai-bridge 工具调用。让该会话先调用 bridge_open_session，再调用 bridge_context 查看目标绑定；需要核对时主动调用 bridge_consult，只传工具名。用 bridge_receive 接收原会话问题并用 bridge_reply 回答。",
+    "配置已写入。请在 Cursor 的 MCP 设置启用 ai-bridge，回到原会话确认工具可见；必要时重新加载窗口并保留原聊天。如果使用 Cursor CLI，先在项目目录执行 cursor-agent mcp enable ai-bridge；无界面运行还要按 Cursor 的审批策略允许 ai-bridge 工具调用。任务可能涉及另一个 AI 工具负责的模块时，先调用 bridge_context 只读查看目标，无需登记；确认需要通信后再调用 bridge_open_session 和 bridge_consult。用 bridge_receive 接收原会话问题并用 bridge_reply 回答。",
   codex:
-    '配置已写入。Codex 重新打开会话后确认 ai-bridge MCP 可见；该服务已设置 default_tools_approval_mode="approve"，只自动批准 ai-bridge 的工具调用，不改 Codex 其他审批设置。让会话先调用 bridge_open_session，再调用 bridge_context 查看目标绑定；发现另一个工具负责的模块需要核对时主动调用 bridge_consult，不要让人转述。用 bridge_receive/bridge_reply 收发原会话问题，目标项目由保存的绑定决定。',
+    '配置已写入。Codex 重新打开会话后确认 ai-bridge MCP 可见；该服务已设置 default_tools_approval_mode="approve"，只自动批准 ai-bridge 的工具调用，不改 Codex 其他审批设置。任务可能涉及另一个 AI 工具负责的模块或跨项目契约时，先调用 bridge_context 只读查看目标，无需登记；确认需要通信后再调用 bridge_open_session 和 bridge_consult，不要让人转述。用 bridge_receive/bridge_reply 收发原会话问题，目标项目由保存的绑定决定。',
   deepseek:
-    "配置已写入 DeepSeek Harness 桌面 profile 的用户 patch 层。重启 DeepSeek Harness 桌面应用后，在原会话中确认 mcp__ai-bridge__ 工具可见。让会话先调用 bridge_open_session，再调用 bridge_context 查看目标绑定；发现另一个工具负责的模块需要核对时主动调用 bridge_consult，不要让人转述。用 bridge_receive/bridge_reply 收发原会话问题，目标项目由保存的绑定决定。",
+    "配置已写入 DeepSeek Harness 桌面 profile 的用户 patch 层。重启 DeepSeek Harness 桌面应用后，在原会话中确认 mcp__ai-bridge__ 工具可见。任务可能涉及另一个 AI 工具负责的模块时，先调用 bridge_context 只读查看目标，无需登记；确认需要通信后再调用 bridge_open_session 和 bridge_consult，不要让人转述。用 bridge_receive/bridge_reply 收发原会话问题，目标项目由保存的绑定决定。",
 };
 const desktopInstructions = {
   claude:
-    "已写入 Claude Desktop 的全局 MCP 配置。完全退出并重启 Claude Desktop，在对话中确认 ai-bridge 工具可用；让会话先调用 bridge_open_session，再用 bridge_context 查看目标绑定。需要核对时主动调用 bridge_consult，只传工具名；用 bridge_receive/bridge_reply 收发原会话问题。无需单独安装 Claude Code CLI；桥接会复用 Claude Desktop 准备的内部运行时。",
+    "已写入 Claude Desktop 的全局 MCP 配置。完全退出并重启 Claude Desktop，在对话中确认 ai-bridge 工具可用；任务可能涉及另一个 AI 工具负责的模块时，先调用 bridge_context 只读查看目标，无需登记。确认需要通信后再调用 bridge_open_session 和 bridge_consult，只传工具名；用 bridge_receive/bridge_reply 收发原会话问题。无需单独安装 Claude Code CLI；桥接会复用 Claude Desktop 准备的内部运行时。",
   cursor:
-    "已写入 Cursor Desktop 的全局 MCP 配置。重启 Cursor 或在 MCP 设置中重新加载 ai-bridge，在对话中确认工具可用；让会话先调用 bridge_open_session，再用 bridge_context 查看目标绑定。需要核对时主动调用 bridge_consult，只传工具名；用 bridge_receive/bridge_reply 收发原会话问题。无需单独安装 Cursor CLI；桥接会使用 Cursor Desktop 自带启动器准备 agent 运行时。",
+    "已写入 Cursor Desktop 的全局 MCP 配置。重启 Cursor 或在 MCP 设置中重新加载 ai-bridge，在对话中确认工具可用；任务可能涉及另一个 AI 工具负责的模块时，先调用 bridge_context 只读查看目标，无需登记。确认需要通信后再调用 bridge_open_session 和 bridge_consult，只传工具名；用 bridge_receive/bridge_reply 收发原会话问题。无需单独安装 Cursor CLI；桥接会使用 Cursor Desktop 自带启动器准备 agent 运行时。",
 };
 
 /**
@@ -92,7 +139,13 @@ const claudeDesktopConfig = () => {
  * 只替换 `[mcp_servers.ai-bridge]` 这一段，保留用户其他 provider/model/MCP 设置。
  * 自动审批只覆盖 ai-bridge 的工具，不改变 Codex 全局审批策略。
  */
-async function configureCodex({ dir, nodePath, scriptPath, codexConfigPath }) {
+async function configureCodex({
+  dir,
+  nodePath,
+  scriptPath,
+  codexConfigPath,
+  rulePath,
+}) {
   const configPath =
     codexConfigPath ||
     join(process.env.CODEX_HOME || join(homedir(), ".codex"), "config.toml");
@@ -126,8 +179,12 @@ async function configureCodex({ dir, nodePath, scriptPath, codexConfigPath }) {
     if (raw) await backupOnce(configPath);
     await writeAtomic(configPath, next);
   }
+  const rulesPath = await mergeBridgeRule(
+    rulePath || join(dirname(configPath), "AGENTS.md"),
+  );
   return {
     configPath,
+    rulesPath,
     tool: "codex",
     instructions: instructions.codex,
     notice:
@@ -249,11 +306,18 @@ export async function configureNativeTool({
   dshHome,
   desktopOnly = false,
   desktopConfigPath,
+  rulePath,
 } = {}) {
   if (!["claude", "cursor", "codex", "deepseek"].includes(tool))
     throw Error("Unsupported native tool");
   if (tool === "codex")
-    return configureCodex({ dir, nodePath, scriptPath, codexConfigPath });
+    return configureCodex({
+      dir,
+      nodePath,
+      scriptPath,
+      codexConfigPath,
+      rulePath,
+    });
   if (tool === "deepseek")
     return configureDeepSeek({ dir, nodePath, scriptPath, dshHome });
   const configPath = desktopOnly
@@ -271,11 +335,25 @@ export async function configureNativeTool({
   };
   if (tool === "claude") entry.type = "stdio";
   await mergeMcpJson(configPath, entry);
+  const rulesPath = await mergeBridgeRule(
+    rulePath ||
+      (tool === "claude"
+        ? desktopOnly
+          ? join(homedir(), ".claude", "CLAUDE.md")
+          : join(resolve(project), "CLAUDE.md")
+        : desktopOnly
+          ? join(homedir(), ".cursor", "rules", "agents-calling.mdc")
+          : join(resolve(project), ".cursor", "rules", "agents-calling.mdc")),
+    tool === "cursor"
+      ? "---\ndescription: Agents Calling bridge trigger\nalwaysApply: true\n---\n\n"
+      : "",
+  );
   const notice = desktopOnly
     ? "已写入桌面应用配置；重启对应桌面应用后生效。配置成功不等于原会话已接入。"
     : "登记与接收由原会话实际调用工具完成；配置成功不等于原会话已接入。bridge_consult 按预绑定项目启动只读托管咨询，但不会接管或唤醒目标原聊天。";
   return {
     configPath,
+    rulesPath,
     tool,
     instructions:
       (desktopOnly && desktopInstructions[tool]) || instructions[tool],

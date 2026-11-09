@@ -90,13 +90,18 @@ test('managed consultation returns immediately when waitMs is omitted',async()=>
  }finally{await mcp.close();await inbox.close();await rm(dir,{recursive:true,force:true});}
 });
 
-test('bridge_context exposes saved targets so the agent can choose proactively',async()=>{
+test('bridge_context exposes saved targets before session registration',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'bridge-mcp-context-'));let seen;
- const inbox=await openNativeInbox({dir,context:async({session})=>{seen=session;return {server:'ai-bridge',caller:{tool:session.tool,title:session.title},targets:[{tool:'claude',projectName:'orders'}],guidance:{trigger:'call bridge_consult proactively'}};}});
+ const inbox=await openNativeInbox({dir,context:async({session})=>{seen=session;return {server:'ai-bridge',caller:{tool:session.tool,title:session.title||null},targets:[{tool:'claude',projectName:'orders'}],guidance:{trigger:'call bridge_consult proactively'}};}});
  const mcp=client(dir,'codex');
  try{
   const listed=await mcp.call('tools/list');assert.ok(listed.tools.some(t=>t.name==='bridge_context'));
+  const preview=await mcp.tool('bridge_context');
+  assert.equal(seen.tool,'codex');assert.equal(seen.title,undefined);assert.equal(seen.projectPath,process.cwd());
+  assert.deepEqual(preview.targets,[{tool:'claude',projectName:'orders'}]);
+  assert.equal(inbox.catalog().length,0);
   const source=await mcp.tool('bridge_open_session',{title:'source task'});
+  assert.equal(inbox.catalog().length,1);
   const context=await mcp.tool('bridge_context',{sessionId:source.id});
   assert.equal(seen.tool,'codex');assert.equal(seen.title,'source task');
   assert.deepEqual(context.targets,[{tool:'claude',projectName:'orders'}]);

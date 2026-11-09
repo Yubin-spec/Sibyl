@@ -146,25 +146,32 @@ export async function createControl({
               tool: binding.targetTool,
               projectId: binding.targetProjectId,
               projectName: target?.name || "未登记项目",
+              // 检测尚未结束时返回 null，避免把“还在加载”误报成“不可用”。
+              available: toolsLoading
+                ? null
+                : Object.hasOwn(agents, binding.targetTool),
             };
           })
       : [];
     return {
       server: "ai-bridge",
+      registered: Boolean(session.id),
       caller: {
         tool: session.tool,
-        title: session.title,
+        title: session.title || null,
         project: source ? { id: source.id, name: source.name } : null,
       },
       targets,
       guidance: {
         trigger:
-          "If the current task touches a module owned by another listed target tool and verification is needed, call bridge_consult with that tool; do not ask the human to relay.",
+          "If the current task touches a module owned by another listed target tool, a cross-project contract, or needs cross-tool verification, call bridge_consult with that tool after bridge_open_session; do not ask the human to relay. Do not communicate merely because a target exists.",
         boundary:
           "The consultation is a separate read-only Worker, not the target original chat. Use bridge_consult_result; do not resubmit while running.",
-        routing: targets.length
-          ? "The saved project binding chooses the target project."
-          : "No target binding is saved; bridge_consult will fall back to the caller project.",
+        routing: !source
+          ? "The current working directory is not a registered project; add it in Agents Calling before consulting."
+          : targets.length
+            ? "The saved project binding chooses the target project."
+            : "No target binding is saved; bridge_consult will fall back to the caller project.",
       },
     };
   }
