@@ -42,6 +42,30 @@ test('a worker completion notifies once without waiting on the sender',async()=>
   }
 });
 
+test('a failed conversation enters the attention queue and notifies once',async()=>{
+  const gate=gatedSender();
+  const f=await workerFixture('write',{runner:async()=>{throw Error('runner exploded');},notify:{enabled:true,config,sender:gate.sender}});
+  try{
+    const project=await f.call('/api/projects/save',{name:'Sibyl',path:f.project});
+    const conversation=await f.call('/api/conversations/create',{title:'boom',projectId:project.id,localAgent:'codex',remoteAgent:'claude',connectionId:'local',rounds:1});
+    await f.call('/api/conversations/run',{id:conversation.id,goal:'go'});
+    await wait(async()=>{
+      const state=await f.call('/api/status');
+      return state.conversations.find(item=>item.id===conversation.id)?.status==='failed'?true:null;
+    });
+    await wait(async()=>gate.sent.some(message=>/待处理/.test(message.title))?true:null);
+    const message=gate.sent.find(item=>/待处理/.test(item.title));
+    assert.match(message.body,/boom/);
+    assert.match(message.body,/完成了什么：/);
+    gate.release();
+    await f.control.notifications.flush();
+    assert.equal(gate.sent.length,1);
+  }finally{
+    gate.release();
+    await f.close();
+  }
+});
+
 test('a plan review advances while a notification is still pending',async()=>{
   const gate=gatedSender();
   const f=await workerFixture('review',{focusThread:async()=>'opened',notify:{enabled:true,config,sender:gate.sender}});
