@@ -13,30 +13,47 @@ description: Use when the user says "你和 Codex/Claude 协作", asks another l
 | 派个活 | 一块改动，一个工作方动手 | `bridge_worker_start`（`tier:"dispatch"`） | 主导方验收后贴补丁 |
 | 分头干 | 两块以上互不相交的改动 | 多次 `bridge_worker_start`（`tier:"parallel"`）+ 不相交 `scope` | 按顺序贴补丁 |
 
-## 第 0 步：和 Codex 的讨论必须可见
+## 第 0 步：讨论必须从任务一开始可见
 
-所有讨论（评审、核对、问答）必须自动出现在 Codex 桌面聊天列表里，并且**从任务一开始**就打开给人看；不能等任务完成后再刷新。
+所有讨论（评审、核对、问答）必须从任务一开始就可见；可见面是**本地 Web 面板**和**当前对话**，不依赖 Codex 桌面 App 窗口。
+
+两种呈现面分工：
+
+- **面板**（观测页，数据来自 `/api/status` + SSE）：worker / 评审的运行状态、线程、轮次、问题数量。
+- **当前对话**：讨论内容本身。每次 `bridge_worker_turn` / `bridge_plan_review_continue` 之前，贴出本轮要发送的任务或评审问题；收到回答、回应 issue/question、发起下一轮时，把内容同步回对话。只看到卡片不等于讨论可见。
+
+打开面板：
+
+```bash
+start-observer.cmd
+```
+
+或指定当前 bridge 的数据目录：
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File start-browser.ps1 -Page observer -DataDir "<当前 bridge 使用的数据目录>"
+```
+
+`/api/status` 只作辅助检查；打开失败或连接不到当前实例时，停止派活并报告，不要只用 API 结果代替人眼可见。
+
+已确认的限制：`codex://threads/<id>?hostId=local` 深链只对 Codex App 本地 host **启动时已加载**的线程有效；App 启动后新建的桥接线程通常要重启 Codex 才能被认识，且 App 没有可用的 Reload 或 Ctrl+R。因此不要把深链当作可见性保障，也不要在产品流程里自动化 Codex App 窗口。
 
 派活顺序固定：
 
 1. `bridge_worker_start({tool:"codex", tier:"consult"|"dispatch"|"parallel", scope?})` 建会话/工作方，**不要带 `prompt`**；
 2. 轮询 `bridge_worker_result({workerId, waitMs})`，直到返回非空 `threadId`（通常 <1 秒）；
-3. 用深链打开会话：
-   `powershell -NoProfile -ExecutionPolicy Bypass -File "D:\LXY_workspace\AI Bridge\Sibyl\scripts\open-codex-thread.ps1" -ThreadId "<threadId>"`
-   （绝对路径，不依赖当前目录；脚本默认带 `?hostId=local`，不带时 Codex 会查云端 host 并落到 ChatGPT 首页）；
-   深链只对 Codex App 本地 host **已加载**的线程有效。App 启动后新建的桥接线程通常要重启 Codex 才能被认识，App 没有可用的 Reload 或 Ctrl+R。如果打开后仍落在 ChatGPT 首页，不要反复重试——重启 Codex 后再打开，或改用 Phase C 观测页/CLI；不要把“OPENED”当成“一定可见”。
-4. 确认可见后，再发任务 `bridge_worker_turn({workerId, prompt})`；**不要先等任务完成**；
-5. 执行期间保持窗口可见，结束后再用 `bridge_worker_result` / `bridge_worker_accept` / `bridge_worker_close` 收报告。
+3. 确认浏览器面板已实际显示该 worker / 线程且连接正常，并在对话里贴出即将发送的任务，再调用 `bridge_worker_turn({workerId, prompt})`；**不要先等任务完成**；
+4. 执行期间让面板保持可见；收到 `result.lastTurn` / 报告后，把回答和下一步同步回对话，再用 `bridge_worker_accept` / `bridge_worker_close` 收尾。
 
-`bridge_worker_start` 带 `prompt` 时，首轮结束会自动 finalize，后续 `turn` 会被拒绝；所以默认不带 prompt。只有拿不到 `threadId`（旧记录或异常）时，才用 `focus-codex-thread.ps1 -Match "<标题片段>"` 兜底；标题是首轮 prompt 的截断，片段必须真的出现在侧栏标题里。`focus-codex-thread.ps1` 默认不再移动/缩放窗口；需要置顶才传 `-Topmost`。
+`bridge_worker_start` 带 `prompt` 时，首轮结束会自动 finalize，后续 `turn` 会被拒绝；所以默认不带 prompt。`open-codex-thread.ps1` / `focus-codex-thread.ps1` 保留为诊断和人工排查工具，不是派活流程的一部分。
 
 长评审的 `timeoutMs` 用 600000。`bridge_ask` 只用于续接已有原会话（不唤醒，需对方 `bridge_receive`）；`bridge_consult` 是 legacy 后台核对，Codex 路径使用 `codex exec` Worker，不进列表，仅人明确同意时用，事后必须同步到可见会话。
 
-上面的调用只示意档位；实际调用 `bridge_worker_start` 时还须传 `tool:"codex"`；默认不带 `prompt`，先拿 `threadId` 打开会话，再 `bridge_worker_turn`。旧版独立启动工具已在本版本移除。
+上面的调用只示意档位；实际调用 `bridge_worker_start` 时还须传 `tool:"codex"`；默认不带 `prompt`，先拿 `threadId`，再 `bridge_worker_turn`。旧版独立启动工具已在本版本移除。
 
 ## 第 2 步：计划评审回路
 
-结构计划用 `bridge_plan_review({planPath})` 启动评审；它创建一个只读 Codex worker，先停在 `awaiting-visibility`。用上面的深链确认可见后，调用 `bridge_plan_review_continue({reviewId,confirmVisibility:true})` 才发第一轮；`bridge_plan_review_result` 取 verdict。
+结构计划用 `bridge_plan_review({planPath})` 启动评审；它创建一个只读 Codex worker，先停在 `awaiting-visibility`。在对话里贴出计划路径与本轮评审重点，并在浏览器面板确认线程/评审已实际显示、连接正常后，调用 `bridge_plan_review_continue({reviewId,confirmVisibility:true})` 才发第一轮；`bridge_plan_review_result` 取 verdict 后，把 verdict、issue/question 和回应同步回对话。
 
 - `changes-required`：用 `bridge_plan_review_respond` 逐条回应。issue 用 `{type:'issue',issueId,decision:'accept'|'reject',evidence?,planChange?}`；question 用 `{type:'question',questionId:'Q1',answer}`。必须覆盖当前轮全部 blocker/major 和 questions。
 - `deadlock`：`bridge_plan_review_decide({choice:'1'})` 只用一次，启动最后一轮；`choice:'0'` 取消。核心版不通过工具产生 waived。
