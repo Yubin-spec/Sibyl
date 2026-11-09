@@ -38,6 +38,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File start-browser.ps1 -Page obse
 
 已确认的限制：`codex://threads/<id>?hostId=local` 深链只对 Codex App 本地 host **启动时已加载**的线程有效；App 启动后新建的桥接线程通常要重启 Codex 才能被认识，且 App 没有可用的 Reload 或 Ctrl+R。因此不要把深链当作可见性保障，也不要在产品流程里自动化 Codex App 窗口。
 
+## 一键入口与上下文 hook
+
+- `node scripts/sibyl.mjs status`：打印工作方、计划评审、待办、待答问题摘要；加 `--json` 输出机读字段。
+- `node scripts/sibyl.mjs open`：打印并打开当前观测页；`--no-open` 只打印 URL。
+- `node scripts/sibyl.mjs hooks off|on|status`：关闭 / 开启 / 查看上下文 hook。离线可用，写在 `<数据目录>/hook-context.json`。
+- SessionStart hook 注入项目与未处理事项；UserPromptSubmit hook 注入待答问题与评审提醒。两者都是只读：不标记已读、不阻塞提交、超时或 daemon 不可用时静默放行。Stop / PreToolUse 仍按各自 hook 条目生效。
+- Codex 没有 hooks；Codex 侧的任务开始 / 交工前检查点见仓库根 `AGENTS.md`。
+
 派活顺序固定：
 
 1. `bridge_worker_start({tool:"codex", tier:"consult"|"dispatch"|"parallel", scope?})` 建会话/工作方，**不要带 `prompt`**；
