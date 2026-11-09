@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {join} from 'node:path';
 import {canonicalProjectPath,projectKey} from './project-path.mjs';
 import {normalizeWorkerLimits,workerTurnTimeoutMs,checkWorkerCapacity,checkProgress} from './consult-policy.mjs';
-import {chooseCodexModel} from './model-policy.mjs';
+import {chooseCodexModel,loadModelPolicy} from './model-policy.mjs';
 import {normalizeScope,findLeaseConflict,scopeSharedConflicts,checkPaths} from './path-scope.mjs';
 import {
   assertSupportedRepository,
@@ -407,6 +407,11 @@ export function createWorkerService({
       const overlap = scope.find(entry => [...staged].some(path => path === entry || path.startsWith(entry + '/') || entry.startsWith(path + '/')));
       if (overlap) throw Error('主导方在 scope 内有已暂存改动；先提交或取消暂存再派活');
     }
+    // Read the project policy before the lease/capacity checks: nothing may
+    // await between those checks and records.set, or two concurrent starts
+    // could both pass them.
+    const autoCodex = tool === 'codex' && (input.model ?? 'auto') === 'auto';
+    const modelPolicy = autoCodex ? await loadModelPolicy(projectPath) : null;
     const repositoryKey = projectKey(projectPath);
     if (leadScope.length) {
       const selfConflict = findLeaseConflict([{workerId: 'lead', scope: leadScope}], scope, {repositoryKey});
@@ -443,7 +448,7 @@ export function createWorkerService({
       effort = input.effort ?? null;
       modelReason = 'claude-default';
     } else if (requestedModel === 'auto') {
-      const choice = chooseCodexModel({tier, kind: input.kind ?? null, risk: input.risk ?? 'normal'});
+      const choice = chooseCodexModel({tier, kind: input.kind ?? null, risk: input.risk ?? 'normal', policy: modelPolicy.policy});
       model = choice.model;
       effort = input.effort ?? choice.effort;
       modelReason = choice.reason;

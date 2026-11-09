@@ -431,3 +431,75 @@ test('a consult worker can start without the ai-bridge MCP',async()=>{
     await f.service.close({session:f.session,workerId:started.workerId});
   }finally{delete process.env.FAKE_ARGS_FILE;await f.cleanup();}
 });
+
+test('a project policy changes the model the worker actually launches with',async()=>{
+  const f=await fixture();
+  await mkdir(join(f.project,'.sibyl'),{recursive:true});
+  await writeFile(join(f.project,'.sibyl','models.json'),JSON.stringify({version:1,codex:{implement:{normal:{model:'gpt-6-luna',effort:'low'}}}}));
+  const argsFile=join(f.root,'args.json');
+  process.env.FAKE_ARGS_FILE=argsFile;
+  try{
+    const started=await f.service.start({session:f.session,tool:'codex',tier:'dispatch',scope:['src'],kind:'implement'});
+    assert.equal(started.model,'gpt-6-luna');
+    assert.equal(started.effort,'low');
+    assert.equal(started.modelReason,'project:implement');
+    const args=await wait(async()=>{try{return JSON.parse(await readFile(argsFile,'utf8'));}catch{return null;}});
+    assert.equal(args[args.indexOf('--model')+1],'gpt-6-luna');
+  }finally{delete process.env.FAKE_ARGS_FILE;await f.cleanup();}
+});
+
+test('an invalid project policy rejects an auto Codex start with the file and field',async()=>{
+  const f=await fixture();
+  await mkdir(join(f.project,'.sibyl'),{recursive:true});
+  await writeFile(join(f.project,'.sibyl','models.json'),JSON.stringify({version:1,codex:{mechanical:{effort:'max'}}}));
+  try{
+    await assert.rejects(
+      ()=>f.service.start({session:f.session,tool:'codex',tier:'dispatch',scope:['src'],kind:'mechanical'}),
+      error=>error.message.includes(join(f.project,'.sibyl','models.json'))&&error.message.includes('mechanical.effort'));
+  }finally{await f.cleanup();}
+});
+
+test('a broken policy does not block an explicit model or Claude auto',async()=>{
+  const f=await fixture();
+  await mkdir(join(f.project,'.sibyl'),{recursive:true});
+  await writeFile(join(f.project,'.sibyl','models.json'),'{not json');
+  try{
+    const explicit=await f.service.start({session:f.session,tool:'codex',tier:'consult',model:'gpt-6-luna'});
+    assert.equal(explicit.model,'gpt-6-luna');
+    const claude=await f.service.start({session:f.session,tool:'claude',tier:'consult',model:'auto'});
+    assert.equal(claude.model,null);
+    assert.equal(claude.modelReason,'claude-default');
+  }finally{await f.cleanup();}
+});
+
+test('concurrent auto starts cannot both pass the lease check',async()=>{
+  const f=await fixture();
+  await mkdir(join(f.project,'.sibyl'),{recursive:true});
+  await writeFile(join(f.project,'.sibyl','models.json'),JSON.stringify({version:1,codex:{implement:{normal:{model:'gpt-6-luna'}}}}));
+  try{
+    const results=await Promise.allSettled([
+      f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src']}),
+      f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src/a.txt']})
+    ]);
+    const rejected=results.filter(r=>r.status==='rejected');
+    assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+    assert.equal(rejected.length,1);
+    assert.match(rejected[0].reason.message,/路径租约冲突/);
+  }finally{await f.cleanup();}
+});
+
+test('concurrent auto starts cannot both pass the per-session capacity check',async()=>{
+  const f=await fixture('write',{parallel:{maxLivePerSession:1}});
+  await mkdir(join(f.project,'.sibyl'),{recursive:true});
+  await writeFile(join(f.project,'.sibyl','models.json'),JSON.stringify({version:1,codex:{implement:{normal:{model:'gpt-6-luna'}}}}));
+  try{
+    const results=await Promise.allSettled([
+      f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['src']}),
+      f.service.start({session:f.session,tool:'codex',tier:'parallel',scope:['docs']})
+    ]);
+    const rejected=results.filter(r=>r.status==='rejected');
+    assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+    assert.equal(rejected.length,1);
+    assert.match(rejected[0].reason.message,/该会话同时最多 1 个工作方/);
+  }finally{await f.cleanup();}
+});
