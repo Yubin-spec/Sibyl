@@ -31,3 +31,15 @@ test('dismissed failures stay quiet until their record changes', () => {
   assert.deepEqual(attentionItems({...base, dismissed}), []);
   assert.equal(attentionItems({...base, consultations:[{...base.consultations[0], updatedAt:'2026-11-03T10:05:00.000Z'}], dismissed}).length, 1);
 });
+
+test('attention items carry timestamps without changing their keys', () => {
+  const items = attentionItems({
+    requests: [{id:'pair-1', name:'Studio', ip:'192.168.1.20'}],
+    consultations: [{id:'c-1', status:'failed', startedAt:'2026-11-09T01:00:00.000Z', updatedAt:'2026-11-09T02:00:00.000Z'}],
+    conversations: [{id:'v-1', status:'failed', updatedAt:'2026-11-09T03:00:00.000Z'}]
+  });
+  assert.equal(items[0].at, null);
+  assert.equal(items[1].at, '2026-11-09T02:00:00.000Z');
+  assert.equal(items[2].at, '2026-11-09T03:00:00.000Z');
+  assert.equal(items[1].key, 'consult:c-1:2026-11-09T02:00:00.000Z');
+});

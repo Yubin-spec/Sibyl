@@ -178,7 +178,25 @@ const FETCH_BLOCKED_PORTS=new Set([1,7,9,11,13,15,17,19,20,21,22,23,25,37,42,43,
 // Bind an ephemeral loopback port that fetch is allowed to call. OS-assigned
 // ports can land on a blocked one (for example 6000), which would break every
 // native MCP request even though the server is healthy.
-export async function listenLoopback(server){
+export const DEFAULT_UI_PORT = 47830;
+
+export async function listenLoopback(server, preferredPort = 0){
+  if(server.listening)return server.address().port;
+  const usable=Number.isInteger(preferredPort)&&preferredPort>=1024&&preferredPort<=65535&&!FETCH_BLOCKED_PORTS.has(preferredPort);
+  if(usable){
+    try{
+      await new Promise((resolve,reject)=>{
+        const onError=error=>{server.off('listening',onListening);reject(error);};
+        const onListening=()=>{server.off('error',onError);resolve();};
+        server.once('error',onError);server.once('listening',onListening);
+        server.listen(preferredPort,'127.0.0.1');
+      });
+      return server.address().port;
+    }catch(error){
+      if(error.code!=='EADDRINUSE'&&error.code!=='EACCES')throw error;
+      if(server.listening)await new Promise(resolve=>server.close(()=>resolve()));
+    }
+  }
   for(let attempt=0;attempt<20;attempt++){
     await new Promise((resolve,reject)=>{
       const onError=error=>{server.off('listening',onListening);reject(error);};

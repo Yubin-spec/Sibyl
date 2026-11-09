@@ -1,4 +1,4 @@
-param([switch]$Stop, [switch]$NoOpen, [string]$DataDir)
+param([switch]$Stop, [switch]$NoOpen, [string]$DataDir, [string]$Page, [string]$Port)
 $ErrorActionPreference = 'Stop'
 if (-not $DataDir) { $DataDir = 'D:\LXY_workspace\AI Bridge\data' }
 $taskCandidates = @()
@@ -19,5 +19,7 @@ $taskArguments = @((Join-Path $PSScriptRoot 'browser.mjs'))
 if ($Stop) { $taskArguments += '--stop' }
 if ($NoOpen) { $taskArguments += '--no-open' }
 if ($DataDir) { $taskArguments += @('--dir', $DataDir) }
+if ($Page) { $taskArguments += @('--page', $Page) }
+if ($Port) { $taskArguments += @('--port', $Port) }
 & $taskNode @taskArguments
 exit $LASTEXITCODE

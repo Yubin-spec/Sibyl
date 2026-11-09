@@ -29,6 +29,7 @@ export function attentionItems({requests = [], consultations = [], conversations
       title: `${clip(request.name, 80) || '未知电脑'} 请求配对`,
       detail: `${clip(request.ip, 80) || '未知地址'} · 同意后对方将获得独立连接权限`,
       pairId: request.id,
+      at: request.createdAt || request.at || null,
       dismissible: false
     });
   }
@@ -41,6 +42,7 @@ export function attentionItems({requests = [], consultations = [], conversations
       title: '只读核对已停止',
       detail: detailForConsult(record, projects),
       consultId: record.id,
+      at: record.updatedAt || record.startedAt || null,
       dismissible: true
     });
   }
@@ -55,6 +57,7 @@ export function attentionItems({requests = [], consultations = [], conversations
       title: `会话执行失败 · ${clip(conversation.title, 80) || '未命名会话'}`,
       detail: [project, reason].filter(Boolean).join(' · '),
       conversationId: conversation.id,
+      at: conversation.updatedAt || conversation.createdAt || null,
       dismissible: true
     });
   }

@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
 import {defaultDataDir} from './runtime.mjs';
 
-const {values}=parseArgs({options:{dir:{type:'string',default:defaultDataDir()},'no-open':{type:'boolean'},stop:{type:'boolean'}}});
+const {values}=parseArgs({options:{dir:{type:'string',default:defaultDataDir()},'no-open':{type:'boolean'},stop:{type:'boolean'},page:{type:'string'},port:{type:'string'}}});
 if(Number(process.versions.node.split('.')[0])<26)throw Error('Node.js 26 or newer is required. Use start-browser.cmd on Windows.');
 const dir=resolve(values.dir),recordFile=join(dir,'browser-runtime.json');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
@@ -32,15 +32,17 @@ if(values.stop){
  if(!r){
   await mkdir(dir,{recursive:true,mode:0o700});
   const log=await open(join(dir,'server.log'),'a',0o600);
-  const child=spawn(process.execPath,[fileURLToPath(new URL('./control.mjs',import.meta.url)),dir],{cwd:dir,detached:true,windowsHide:true,stdio:['ignore',log.fd,log.fd]});
+  const child=spawn(process.execPath,[fileURLToPath(new URL('./control.mjs',import.meta.url)),dir],{cwd:dir,detached:true,windowsHide:true,stdio:['ignore',log.fd,log.fd],env:{...process.env,...(values.port?{SIBYL_UI_PORT:values.port}:{})}});
   let failure;child.once('error',e=>failure=e);child.unref();await log.close();
   for(let i=0;i<150;i++){if(failure)throw failure;r=await running();if(r)break;await pause(100);}
   if(!r)throw Error('Bridge did not start. Inspect '+join(dir,'server.log'));
  }
  if(!values['no-open']){
+  const page=/^[a-z-]+$/.test(values.page||'')?values.page:'';
+  const target=page?r.url+'/?page='+page:r.url;
   const command=process.platform==='win32'?'rundll32.exe':process.platform==='darwin'?'open':'xdg-open';
-  const args=process.platform==='win32'?['url.dll,FileProtocolHandler',r.url]:[r.url];
-  const browser=spawn(command,args,{detached:true,windowsHide:true,stdio:'ignore'});browser.on('error',e=>console.error('Open this URL manually: '+r.url+' ('+e.message+')'));browser.unref();
+  const args=process.platform==='win32'?['url.dll,FileProtocolHandler',target]:[target];
+  const browser=spawn(command,args,{detached:true,windowsHide:true,stdio:'ignore'});browser.on('error',e=>console.error('Open this URL manually: '+target+' ('+e.message+')'));browser.unref();
  }
- console.log(JSON.stringify({url:r.url,pid:r.pid,dataDir:dir}));
+ console.log(JSON.stringify({url:r.url,observer:r.url+'/?page=observer',pid:r.pid,dataDir:dir}));
 }
