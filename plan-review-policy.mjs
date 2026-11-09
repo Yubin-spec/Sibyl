@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {readdir, lstat} from 'node:fs/promises';
 import {join} from 'node:path';
+import {supportsEffort} from './model-policy.mjs';
 
 export const PLAN_REVIEW_OPEN = '<<<SIBYL_REVIEW';
 export const PLAN_REVIEW_CLOSE = 'SIBYL_REVIEW>>>';
@@ -24,9 +25,9 @@ export const DEFAULT_PLAN_REVIEW = Object.freeze({
   maxIssues: 20,
   maxFocusItems: 20,
   maxResponsesBytes: 12000,
-  reviewerModel: 'auto',
+  reviewerModel: 'gpt-6-astra',
   reviewerFinalModel: 'gpt-6-astra',
-  reviewerEffort: 'high'
+  reviewerEffort: 'ultra'
 });
 
 const REVIEW_VALUES = new Set(['required', 'not-required', 'approved', 'provisional', 'waived']);
@@ -477,6 +478,11 @@ export function normalizeReviewConfig(value = {}) {
   }
   out.protocolVersion = PROTOCOL_VERSION;
   out.hashVersion = HASH_VERSION;
+  for (const key of ['reviewerModel', 'reviewerFinalModel']) {
+    if (out[key] !== 'auto' && !supportsEffort(out[key], out.reviewerEffort)) {
+      throw Error('Invalid ' + key + ': reviewerEffort ultra is not supported by ' + out[key] + '; set a compatible reviewerEffort such as high');
+    }
+  }
   return out;
 }
 

@@ -38,14 +38,15 @@ test('the plan review worker ignores the project routing table', async () => {
     const started = await f.service.start({session: f.session, planPath: f.planPath});
     await f.waitStatus(started.reviewId, 'approved');
     assert.equal(f.fake.workers[0].input.useProjectPolicy, false);
-    assert.equal(f.fake.workers[0].input.model, 'auto');
+    assert.equal(f.fake.workers[0].input.model, 'gpt-6-astra');
+    assert.equal(f.fake.workers[0].input.effort, 'ultra');
   } finally {
     await f.cleanup();
   }
 });
 
 test('a configured reviewerModel is passed to the review worker', async () => {
-  const f = await reviewFixture({verdicts: [approve], config: {reviewerModel: 'gpt-6-luna'}});
+  const f = await reviewFixture({verdicts: [approve], config: {reviewerModel: 'gpt-6-luna', reviewerEffort: 'high'}});
   try {
     const started = await f.service.start({session: f.session, planPath: f.planPath});
     await f.waitStatus(started.reviewId, 'approved');
@@ -98,12 +99,13 @@ test('three rounds deadlock and the final human round is one-shot', async () => 
     assert.equal(f.fake.workers.length, 4);
     for (const worker of f.fake.workers.slice(0, 3)) {
       assert.equal(worker.input.useProjectPolicy, false);
-      assert.equal(worker.input.model, 'auto');
+      assert.equal(worker.input.model, 'gpt-6-astra');
       assert.equal(worker.input.kind, 'review');
       assert.equal(worker.input.risk, 'high');
-      assert.equal(worker.input.effort, 'high');
+      assert.equal(worker.input.effort, 'ultra');
     }
     assert.equal(f.fake.workers[3].input.model, 'gpt-6-astra');
+    assert.equal(f.fake.workers[3].input.effort, 'ultra');
     assert.equal(f.fake.workers[3].input.useProjectPolicy, false);
   } finally {
     await f.cleanup();

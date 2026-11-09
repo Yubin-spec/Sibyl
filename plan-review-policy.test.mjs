@@ -8,7 +8,7 @@ import {
   REVIEW_STATES, PROTOCOL_VERSION, HASH_VERSION,
   parsePlanDeclaration, planInputHash, parseFocus, isStructural,
   scanGeneratedBlocks, stripGeneratedReview, writeCodexReviewSection,
-  parseVerdict, findPlanFiles, normalizeReviewConfig,
+  parseVerdict, findPlanFiles, normalizeReviewConfig, DEFAULT_PLAN_REVIEW,
   buildReviewPrompt, buildResponsePrompt
 } from './plan-review-policy.mjs';
 
@@ -153,6 +153,24 @@ test('config only accepts the time-oriented whitelist', () => {
   assert.equal(config.hashVersion, HASH_VERSION);
   assert.throws(() => normalizeReviewConfig({maxReviewTokens: 1}), /Unsupported/);
   assert.throws(() => normalizeReviewConfig({maxRounds: 0}), /Invalid/);
+});
+
+test('the default reviewer is Astra at ultra effort', () => {
+  const config = normalizeReviewConfig();
+  assert.equal(config.reviewerModel, 'gpt-6-astra');
+  assert.equal(config.reviewerFinalModel, 'gpt-6-astra');
+  assert.equal(config.reviewerEffort, 'ultra');
+  assert.equal(DEFAULT_PLAN_REVIEW.reviewerModel, 'gpt-6-astra');
+});
+
+test('a reviewer model that cannot run ultra is rejected unless the effort is paired', () => {
+  assert.throws(() => normalizeReviewConfig({reviewerModel: 'gpt-6-luna'}),
+    /reviewerModel.*ultra.*gpt-6-luna/i);
+  assert.throws(() => normalizeReviewConfig({reviewerFinalModel: 'gpt-6-luna'}),
+    /reviewerFinalModel.*ultra.*gpt-6-luna/i);
+  const paired = normalizeReviewConfig({reviewerModel: 'gpt-6-luna', reviewerFinalModel: 'gpt-6-luna', reviewerEffort: 'high'});
+  assert.equal(paired.reviewerModel, 'gpt-6-luna');
+  assert.equal(paired.reviewerEffort, 'high');
 });
 
 test('findPlanFiles finds docs plans and root plan files only', async () => {
