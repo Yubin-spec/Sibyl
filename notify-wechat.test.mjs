@@ -37,6 +37,14 @@ test('notify pipes the body on stdin instead of the command line',async()=>{
   assert.ok(seen.command.includes("'/hm' send --to 'weixin'"));
 });
 
+test('notify forwards an abort signal to the runner',async()=>{
+  const controller=new AbortController();
+  let seen;
+  await notify({title:'t',body:'b',config:{host:'h',user:'u',key:'k',hermes:'/hm',target:'weixin'},
+    run:async options=>{seen=options.signal;return 'sent';},signal:controller.signal});
+  assert.equal(seen,controller.signal);
+});
+
 test('a missing config file is reported in plain language',async()=>{
   await assert.rejects(loadConfig('C:/definitely/not/here.json'),/Missing notify config: create .*here\.json/);
 });
