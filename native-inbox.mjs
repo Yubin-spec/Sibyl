@@ -5,7 +5,9 @@ import {randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
 import {listenLoopback} from './runtime.mjs';
 import {projectKey} from './project-path.mjs';
 import {gateWorkerStart} from './worker-gate.mjs';
+import {buildHookContext} from './hook-context.mjs';
 const PLAN_REVIEW_PROTOCOL='plan-review/v1';
+const HOOK_PROTOCOL='hook-context/v1';
 
 const validId=v=>typeof v==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(v);
 const workerId=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(v);
@@ -36,7 +38,7 @@ export async function openNativeInbox(options){
   const release=async()=>{const owner=JSON.parse(await readFile(lock,'utf8').catch(()=>'{}'));if(owner.nonce===nonce)await rm(lock,{force:true});};
   try{return await createNativeInbox({...options,release});}catch(e){await release();throw e;}
 }
-async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consult,consultResult,consultStop,resolveProject,autoBind,worker={},planReview={}}){
+async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consult,consultResult,consultStop,resolveProject,autoBind,worker={},planReview={},hookContext}){
   await mkdir(dir,{recursive:true,mode:0o700});
   const file=join(dir,'native-questions.json'),runtimeFile=join(dir,'native-runtime.json');
   let questions=[];try{questions=JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
@@ -92,6 +94,24 @@ async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consu
         if(typeof planReview.check!=='function')throw Error('Plan review is unavailable');
         if(!text(body.projectPath,1024)||body.filePath!==undefined&&!text(body.filePath,1024)||body.mode!==undefined&&!['ask','warn'].includes(body.mode))throw Error('Invalid plan review check');
         return send(200,await planReview.check({projectPath:body.projectPath,filePath:body.filePath,mode:body.mode}));
+      }
+      if(req.url==='/hook/context'){
+        if(body.protocol!==HOOK_PROTOCOL)throw Error('Unsupported hook protocol');
+        if(!['session-start','user-prompt'].includes(body.event))throw Error('Invalid hook event');
+        if(!text(body.projectPath,1024))throw Error('Invalid project path');
+        if(body.nativeSessionId!==undefined&&!text(body.nativeSessionId,200))throw Error('Invalid native session id');
+        expire();
+        const key=projectKey(body.projectPath),requesterTool='claude',byProject=new Map();
+        if(key)for(const item of sessions.values())if(item.projectKey===key)byProject.set(item.id,item);
+        const pendingQuestions=questions.filter(q=>['queued','delivered'].includes(q.status)&&byProject.has(q.targetSessionId)).map(q=>{
+          const target=byProject.get(q.targetSessionId);
+          const owner=body.nativeSessionId&&target.nativeSessionId&&target.nativeSessionId===body.nativeSessionId?'own':target.tool===requesterTool?'sameTool':'otherTool';
+          return {id:q.id,status:q.status,createdAt:q.createdAt,owner,source:{title:q.source?.title,tool:q.source?.tool},target:{title:target.title,tool:target.tool,nativeSessionId:target.nativeSessionId??null}};
+        });
+        const input={event:body.event,projectPath:body.projectPath,projectKey:key,nativeSessionId:body.nativeSessionId,pendingQuestions};
+        let value=null;
+        try{value=typeof hookContext==='function'?await hookContext(input):null;}catch{value=null;}
+        return send(200,{text:typeof value?.text==='string'?value.text:buildHookContext(input)});
       }
       const s=own(body);
       // Local callers authenticate their session lease; never accept a self-reported source.

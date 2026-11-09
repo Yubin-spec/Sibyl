@@ -46,6 +46,54 @@ test('native question reaches only the registered receiver and its answer return
   }finally{await new Promise(r=>bridge.server.close(r));await inbox.close();await rm(dir,{recursive:true,force:true});}
 });
 
+test('hook context is project-scoped, read-only and never exposes question text',async()=>{
+  const {openNativeInbox}=await import('./native-inbox.mjs');
+  const dir=await mkdtemp(join(tmpdir(),'bridge-native-hook-'));
+  let seen;
+  const inbox=await openNativeInbox({dir,hookContext:async input=>{seen=input;return {text:'CTX '+input.event+' '+input.pendingQuestions.map(question=>question.owner).join(',')};}});
+  try{
+    const runtime=JSON.parse(await readFile(join(dir,'native-runtime.json'),'utf8'));
+    const local=async(path,body)=>{const response=await fetch(runtime.url+path,{method:'POST',headers:{authorization:'Bearer '+runtime.token,'content-type':'application/json'},body:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw Error(data.error);return {status:response.status,data};};
+    const a=(await local('/register',{tool:'claude',title:'A',projectPath:process.cwd(),nativeSessionId:'A'})).data;
+    const b=(await local('/register',{tool:'claude',title:'B',projectPath:process.cwd(),nativeSessionId:'B'})).data;
+    const c=(await local('/register',{tool:'claude',title:'C',projectPath:tmpdir()})).data;
+    await inbox.request({id:'peer'},{id:'qa',targetSessionId:a.id,source:{id:'source',title:'Source',tool:'codex'},text:'QUESTION-A'});
+    await inbox.request({id:'peer'},{id:'qb',targetSessionId:b.id,source:{id:'source',title:'Source',tool:'codex'},text:'QUESTION-B'});
+    await inbox.request({id:'peer'},{id:'qc',targetSessionId:c.id,source:{id:'source',title:'Source',tool:'codex'},text:'QUESTION-C'});
+
+    const started=await local('/hook/context',{protocol:'hook-context/v1',event:'session-start',projectPath:process.cwd(),nativeSessionId:'A'});
+    assert.equal(started.status,200);
+    assert.equal(started.data.text,'CTX session-start own,sameTool');
+    assert.deepEqual(seen.pendingQuestions.map(question=>question.owner),['own','sameTool']);
+    assert.ok(!JSON.stringify(seen).includes('QUESTION-A'));
+    assert.equal((await inbox.result({id:'peer'},'qa')).status,'queued');
+
+    const prompted=await local('/hook/context',{protocol:'hook-context/v1',event:'user-prompt',projectPath:process.cwd()});
+    assert.equal(prompted.data.text,'CTX user-prompt sameTool,sameTool');
+
+    await assert.rejects(local('/hook/context',{protocol:'wrong',event:'session-start',projectPath:process.cwd()}),/protocol/);
+    await assert.rejects(local('/hook/context',{protocol:'hook-context/v1',event:'bogus',projectPath:process.cwd()}),/event/);
+    await assert.rejects(local('/hook/context',{protocol:'hook-context/v1',event:'session-start',projectPath:''}),/path/);
+  }finally{await inbox.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('hook context falls back to the built-in text without a callback or when it throws',async()=>{
+  const {openNativeInbox}=await import('./native-inbox.mjs');
+  for(const hookContext of [undefined,async()=>{throw Error('boom');}]){
+    const dir=await mkdtemp(join(tmpdir(),'bridge-native-hook-fallback-'));
+    const inbox=await openNativeInbox({dir,hookContext});
+    try{
+      const runtime=JSON.parse(await readFile(join(dir,'native-runtime.json'),'utf8'));
+      const local=async(path,body)=>{const response=await fetch(runtime.url+path,{method:'POST',headers:{authorization:'Bearer '+runtime.token,'content-type':'application/json'},body:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw Error(data.error);return data;};
+      const session=await local('/register',{tool:'claude',title:'A',projectPath:process.cwd()});
+      await inbox.request({id:'peer'},{id:'q',targetSessionId:session.id,source:{id:'source',title:'Source',tool:'codex'},text:'QUESTION'});
+      const value=await local('/hook/context',{protocol:'hook-context/v1',event:'session-start',projectPath:process.cwd()});
+      assert.match(value.text,/待答问题 1 条/);
+      assert.ok(!value.text.includes('QUESTION'));
+    }finally{await inbox.close();await rm(dir,{recursive:true,force:true});}
+  }
+});
+
 test('restarting inbox never advertises dead sessions or replays pending questions',async()=>{
   const {openNativeInbox}=await import('./native-inbox.mjs');
   const dir=await mkdtemp(join(tmpdir(),'bridge-native-restart-'));
