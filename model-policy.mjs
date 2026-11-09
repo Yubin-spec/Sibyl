@@ -6,12 +6,23 @@ export const CODEX_MODELS = Object.freeze(['gpt-6.1-sol','gpt-6-astra','gpt-6.1-
 const EFFORTS = ['low', 'medium', 'high', 'ultra'];
 const KINDS = ['review', 'implement', 'mechanical', 'frontier'];
 const RISKS = ['normal', 'high'];
+const NO_ULTRA_MODELS = new Set(['gpt-6-luna', 'gpt-5.6-luna', 'gpt-reserve', 'codex-auto-review']);
+
+export function supportsEffort(model, effort) {
+  return effort !== 'ultra' || !NO_ULTRA_MODELS.has(model);
+}
+
+function assertEffortSupport(path, leaf) {
+  if (!supportsEffort(leaf.model, leaf.effort)) {
+    throw Error(path + '.effort ultra is not supported by ' + leaf.model + '; set an explicit compatible effort such as high');
+  }
+}
 
 export const DEFAULT_CODEX_POLICY = Object.freeze({
   mechanical: Object.freeze({model: 'gpt-6-luna', effort: 'low'}),
   review: Object.freeze({
-    normal: Object.freeze({model: 'gpt-6.1-terra', effort: 'medium'}),
-    high: Object.freeze({model: 'gpt-6.1-sol', effort: 'high'})
+    normal: Object.freeze({model: 'gpt-6-astra', effort: 'ultra'}),
+    high: Object.freeze({model: 'gpt-6-astra', effort: 'ultra'})
   }),
   implement: Object.freeze({
     normal: Object.freeze({model: 'gpt-6.1-sol', effort: 'medium'}),
@@ -67,6 +78,12 @@ export function normalizeModelPolicy(value) {
       }
     }
   }
+  assertEffortSupport('codex.mechanical', policy.mechanical);
+  assertEffortSupport('codex.review.normal', policy.review.normal);
+  assertEffortSupport('codex.review.high', policy.review.high);
+  assertEffortSupport('codex.implement.normal', policy.implement.normal);
+  assertEffortSupport('codex.implement.high', policy.implement.high);
+  assertEffortSupport('codex.frontier', policy.frontier);
   return Object.freeze({
     mechanical: Object.freeze(policy.mechanical),
     review: Object.freeze({normal: Object.freeze(policy.review.normal), high: Object.freeze(policy.review.high)}),

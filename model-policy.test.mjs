@@ -11,9 +11,15 @@ test('mechanical work uses the cheap fast model',()=>{
   assert.deepEqual(chooseCodexModel({tier:'dispatch',kind:'mechanical'}),{model:'gpt-6-luna',effort:'low',reason:'mechanical'});
 });
 
-test('normal review uses the balanced model, high-risk review escalates',()=>{
-  assert.deepEqual(chooseCodexModel({tier:'consult',kind:'review'}),{model:'gpt-6.1-terra',effort:'medium',reason:'review'});
-  assert.deepEqual(chooseCodexModel({tier:'consult',kind:'review',risk:'high'}),{model:'gpt-6.1-sol',effort:'high',reason:'review-high-risk'});
+test('review always uses Astra at ultra effort',()=>{
+  assert.deepEqual(chooseCodexModel({tier:'consult',kind:'review'}),{model:'gpt-6-astra',effort:'ultra',reason:'review'});
+  assert.deepEqual(chooseCodexModel({tier:'consult',kind:'review',risk:'high'}),{model:'gpt-6-astra',effort:'ultra',reason:'review-high-risk'});
+});
+
+test('the default review route selects Astra plus ultra',()=>{
+  for(const risk of ['normal','high']){
+    assert.deepEqual(chooseCodexModel({kind:'review',risk,policy:DEFAULT_CODEX_POLICY}),{model:'gpt-6-astra',effort:'ultra',reason:risk==='high'?'review-high-risk':'review'});
+  }
 });
 
 test('implementation uses the workhorse at medium and escalates by risk',()=>{
@@ -26,7 +32,7 @@ test('frontier work alone uses Astra',()=>{
 });
 
 test('tier picks a sensible default kind and unknown values are rejected',()=>{
-  assert.equal(chooseCodexModel({tier:'consult'}).model,'gpt-6.1-terra');
+  assert.equal(chooseCodexModel({tier:'consult'}).model,'gpt-6-astra');
   assert.equal(chooseCodexModel({tier:'dispatch'}).model,'gpt-6.1-sol');
   assert.throws(()=>chooseCodexModel({kind:'unknown'}),/kind must be review, implement, mechanical or frontier/);
   assert.throws(()=>chooseCodexModel({risk:'unknown'}),/risk must be normal or high/);
@@ -35,8 +41,8 @@ test('tier picks a sensible default kind and unknown values are rejected',()=>{
 test('the default policy reproduces every current choice',()=>{
   const cases=[
     [{tier:'dispatch',kind:'mechanical'},{model:'gpt-6-luna',effort:'low',reason:'mechanical'}],
-    [{tier:'consult',kind:'review'},{model:'gpt-6.1-terra',effort:'medium',reason:'review'}],
-    [{tier:'consult',kind:'review',risk:'high'},{model:'gpt-6.1-sol',effort:'high',reason:'review-high-risk'}],
+    [{tier:'consult',kind:'review'},{model:'gpt-6-astra',effort:'ultra',reason:'review'}],
+    [{tier:'consult',kind:'review',risk:'high'},{model:'gpt-6-astra',effort:'ultra',reason:'review-high-risk'}],
     [{tier:'dispatch',kind:'implement'},{model:'gpt-6.1-sol',effort:'medium',reason:'implement'}],
     [{tier:'parallel',kind:'implement',risk:'high'},{model:'gpt-6.1-sol',effort:'high',reason:'implement-high-risk'}],
     [{kind:'frontier'},{model:'gpt-6-astra',effort:'high',reason:'frontier'}]
@@ -51,13 +57,27 @@ test('a project policy overrides one leaf and leaves the rest intact',()=>{
   assert.deepEqual(chooseCodexModel({tier:'dispatch',kind:'implement',risk:'high',policy}),
     {model:'gpt-6.1-sol',effort:'high',reason:'implement-high-risk'});
   assert.deepEqual(chooseCodexModel({tier:'consult',kind:'review',policy}),
-    {model:'gpt-6.1-terra',effort:'medium',reason:'review'});
+    {model:'gpt-6-astra',effort:'ultra',reason:'review'});
 });
 
 test('an overridden effort alone keeps the default model',()=>{
-  const policy=normalizeModelPolicy({version:1,codex:{review:{high:{effort:'ultra'}}}});
+  const policy=normalizeModelPolicy({version:1,codex:{review:{high:{effort:'high'}}}});
   assert.deepEqual(chooseCodexModel({tier:'consult',kind:'review',risk:'high',policy}),
-    {model:'gpt-6.1-sol',effort:'ultra',reason:'project:review-high-risk'});
+    {model:'gpt-6-astra',effort:'high',reason:'project:review-high-risk'});
+});
+
+test('an override equal to the default is not reported as a project choice',()=>{
+  const policy=normalizeModelPolicy({version:1,codex:{review:{high:{model:'gpt-6-astra',effort:'ultra'}}}});
+  assert.deepEqual(chooseCodexModel({tier:'consult',kind:'review',risk:'high',policy}),
+    {model:'gpt-6-astra',effort:'ultra',reason:'review-high-risk'});
+});
+
+test('a model-only override that cannot run ultra is rejected',()=>{
+  assert.throws(()=>normalizeModelPolicy({version:1,codex:{review:{normal:{model:'gpt-6-luna'}}}}),
+    /codex\.review\.normal.*ultra.*gpt-6-luna/i);
+  const policy=normalizeModelPolicy({version:1,codex:{review:{normal:{model:'gpt-6-luna',effort:'high'}}}});
+  assert.deepEqual(chooseCodexModel({tier:'consult',kind:'review',policy}),
+    {model:'gpt-6-luna',effort:'high',reason:'project:review'});
 });
 
 test('invalid policy values are rejected with the offending key',()=>{

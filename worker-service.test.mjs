@@ -177,8 +177,8 @@ test('start records the auto-selected model and effort',async()=>{
     assert.equal(cheap.model,'gpt-6-luna');
     assert.equal(cheap.effort,'low');
     const review=await f.service.start({session:f.session,tool:'codex',tier:'consult',kind:'review',risk:'high',prompt:'x'});
-    assert.equal(review.model,'gpt-6.1-sol');
-    assert.equal(review.effort,'high');
+    assert.equal(review.model,'gpt-6-astra');
+    assert.equal(review.effort,'ultra');
   }finally{await f.cleanup();}
 });
 
@@ -195,13 +195,25 @@ test('the launcher receives the chosen model and effort',async()=>{
   }finally{delete process.env.FAKE_ARGS_FILE;await f.cleanup();}
 });
 
+test('the review launcher receives Astra and ultra',async()=>{
+  const f=await fixture();
+  const argsFile=join(f.root,'args.json');process.env.FAKE_ARGS_FILE=argsFile;
+  try{
+    const started=await f.service.start({session:f.session,tool:'codex',tier:'consult',kind:'review',risk:'high'});
+    const args=await wait(async()=>{try{return JSON.parse(await readFile(argsFile,'utf8'));}catch{return null;}});
+    assert.equal(args[args.indexOf('--model')+1],'gpt-6-astra');
+    assert.equal(args[args.indexOf('--effort')+1],'ultra');
+    assert.ok(started.workerId);
+  }finally{delete process.env.FAKE_ARGS_FILE;await f.cleanup();}
+});
+
 test('explicit effort wins and Claude auto gets no model',async()=>{
   const f=await fixture();
   try{
     const claude=await f.service.start({session:f.session,tool:'claude',tier:'consult',model:'auto'});
     assert.equal(claude.model,null);
     const codex=await f.service.start({session:f.session,tool:'codex',tier:'consult',kind:'review',effort:'low'});
-    assert.equal(codex.model,'gpt-6.1-terra');
+    assert.equal(codex.model,'gpt-6-astra');
     assert.equal(codex.effort,'low');
   }finally{await f.cleanup();}
 });
@@ -510,7 +522,7 @@ test('a worker started with useProjectPolicy false ignores the project policy',a
   await writeFile(join(f.project,'.sibyl','models.json'),JSON.stringify({version:1,codex:{review:{high:{model:'gpt-6-luna'}}}}));
   try{
     const started=await f.service.start({session:f.session,tool:'codex',tier:'consult',kind:'review',risk:'high',useProjectPolicy:false});
-    assert.equal(started.model,'gpt-6.1-sol');
+    assert.equal(started.model,'gpt-6-astra');
     assert.equal(started.modelReason,'review-high-risk');
   }finally{await f.cleanup();}
 });
@@ -521,7 +533,7 @@ test('useProjectPolicy false skips even a broken policy',async()=>{
   await writeFile(join(f.project,'.sibyl','models.json'),'{not json');
   try{
     const started=await f.service.start({session:f.session,tool:'codex',tier:'consult',kind:'review',risk:'high',useProjectPolicy:false});
-    assert.equal(started.model,'gpt-6.1-sol');
+    assert.equal(started.model,'gpt-6-astra');
   }finally{await f.cleanup();}
 });
 
