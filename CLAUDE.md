@@ -40,6 +40,13 @@
 
 评审不可用（Codex 原会话不在线）时，停下来告诉人，不要静默跳过。
 
+## 角色分工（硬规则）
+
+- **Claude**：写计划 → 与 Codex 协商完善 → 作为总工程师分配任务 → 验收结果。
+- **Codex**：评审计划 → 执行任务。
+- 顺序：Claude 计划 → Codex 评审 → 协商完善 → Claude 分配 → Codex 执行 → Claude 验收。
+- 不要把两者对调成「Claude 执行、Codex 评审」。
+
 ## 计划评审工具（核心版）
 
 - 结构计划：`bridge_plan_review({planPath})` → `awaiting-visibility` → 确认可见后 `bridge_plan_review_continue({reviewId,confirmVisibility:true})` → `bridge_plan_review_result`。
