@@ -32,6 +32,30 @@ test('approve writes the review section and preserves the input hash', async () 
   }
 });
 
+test('the plan review worker ignores the project routing table', async () => {
+  const f = await reviewFixture({verdicts: [approve]});
+  try {
+    const started = await f.service.start({session: f.session, planPath: f.planPath});
+    await f.waitStatus(started.reviewId, 'approved');
+    assert.equal(f.fake.workers[0].input.useProjectPolicy, false);
+    assert.equal(f.fake.workers[0].input.model, 'auto');
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('a configured reviewerModel is passed to the review worker', async () => {
+  const f = await reviewFixture({verdicts: [approve], config: {reviewerModel: 'gpt-6-luna'}});
+  try {
+    const started = await f.service.start({session: f.session, planPath: f.planPath});
+    await f.waitStatus(started.reviewId, 'approved');
+    assert.equal(f.fake.workers[0].input.model, 'gpt-6-luna');
+    assert.equal(f.fake.workers[0].input.useProjectPolicy, false);
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test('changes-required then respond approves on round 2', async () => {
   const f = await reviewFixture({verdicts: [changes, approve]});
   try {
@@ -71,6 +95,16 @@ test('three rounds deadlock and the final human round is one-shot', async () => 
     assert.equal(final.finalRoundUsed, true);
     await assert.rejects(f.service.decide({session: f.session, reviewId: started.reviewId, choice: '1'}), /deadlock|final/i);
     await f.waitStatus(started.reviewId, 'approved');
+    assert.equal(f.fake.workers.length, 4);
+    for (const worker of f.fake.workers.slice(0, 3)) {
+      assert.equal(worker.input.useProjectPolicy, false);
+      assert.equal(worker.input.model, 'auto');
+      assert.equal(worker.input.kind, 'review');
+      assert.equal(worker.input.risk, 'high');
+      assert.equal(worker.input.effort, 'high');
+    }
+    assert.equal(f.fake.workers[3].input.model, 'gpt-6-astra');
+    assert.equal(f.fake.workers[3].input.useProjectPolicy, false);
   } finally {
     await f.cleanup();
   }

@@ -409,8 +409,9 @@ export function createWorkerService({
     }
     // Read the project policy before the lease/capacity checks: nothing may
     // await between those checks and records.set, or two concurrent starts
-    // could both pass them.
-    const autoCodex = tool === 'codex' && (input.model ?? 'auto') === 'auto';
+    // could both pass them. Plan review opts out so a project config cannot
+    // silently weaken the review gate.
+    const autoCodex = tool === 'codex' && (input.model ?? 'auto') === 'auto' && input.useProjectPolicy !== false;
     const modelPolicy = autoCodex ? await loadModelPolicy(projectPath) : null;
     const repositoryKey = projectKey(projectPath);
     if (leadScope.length) {
@@ -448,7 +449,7 @@ export function createWorkerService({
       effort = input.effort ?? null;
       modelReason = 'claude-default';
     } else if (requestedModel === 'auto') {
-      const choice = chooseCodexModel({tier, kind: input.kind ?? null, risk: input.risk ?? 'normal', policy: modelPolicy.policy});
+      const choice = chooseCodexModel({tier, kind: input.kind ?? null, risk: input.risk ?? 'normal', policy: modelPolicy?.policy});
       model = choice.model;
       effort = input.effort ?? choice.effort;
       modelReason = choice.reason;

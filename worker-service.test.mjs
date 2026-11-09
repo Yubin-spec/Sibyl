@@ -503,3 +503,49 @@ test('concurrent auto starts cannot both pass the per-session capacity check',as
     assert.match(rejected[0].reason.message,/该会话同时最多 1 个工作方/);
   }finally{await f.cleanup();}
 });
+
+test('a worker started with useProjectPolicy false ignores the project policy',async()=>{
+  const f=await fixture();
+  await mkdir(join(f.project,'.sibyl'),{recursive:true});
+  await writeFile(join(f.project,'.sibyl','models.json'),JSON.stringify({version:1,codex:{review:{high:{model:'gpt-6-luna'}}}}));
+  try{
+    const started=await f.service.start({session:f.session,tool:'codex',tier:'consult',kind:'review',risk:'high',useProjectPolicy:false});
+    assert.equal(started.model,'gpt-6.1-sol');
+    assert.equal(started.modelReason,'review-high-risk');
+  }finally{await f.cleanup();}
+});
+
+test('useProjectPolicy false skips even a broken policy',async()=>{
+  const f=await fixture();
+  await mkdir(join(f.project,'.sibyl'),{recursive:true});
+  await writeFile(join(f.project,'.sibyl','models.json'),'{not json');
+  try{
+    const started=await f.service.start({session:f.session,tool:'codex',tier:'consult',kind:'review',risk:'high',useProjectPolicy:false});
+    assert.equal(started.model,'gpt-6.1-sol');
+  }finally{await f.cleanup();}
+});
+
+test('nothing awaits between the lease checks and registering the worker',async()=>{
+  const source=await readFile(new URL('./workers.mjs',import.meta.url),'utf8');
+  const start=source.indexOf('const repositoryKey = projectKey(projectPath);');
+  const end=source.indexOf('records.set(id, record)',start);
+  assert.ok(start>0&&end>start);
+  assert.doesNotMatch(source.slice(start,end),/\bawait\b/);
+});
+
+test('an explicit model and effort win over a valid project policy',async()=>{
+  const f=await fixture();
+  await mkdir(join(f.project,'.sibyl'),{recursive:true});
+  await writeFile(join(f.project,'.sibyl','models.json'),JSON.stringify({version:1,codex:{review:{high:{model:'gpt-6-luna',effort:'low'}}}}));
+  const argsFile=join(f.root,'args.json');
+  process.env.FAKE_ARGS_FILE=argsFile;
+  try{
+    const started=await f.service.start({session:f.session,tool:'codex',tier:'consult',kind:'review',risk:'high',model:'gpt-6.1-sol',effort:'high'});
+    assert.equal(started.model,'gpt-6.1-sol');
+    assert.equal(started.effort,'high');
+    assert.equal(started.modelReason,'explicit');
+    const args=await wait(async()=>{try{return JSON.parse(await readFile(argsFile,'utf8'));}catch{return null;}});
+    assert.equal(args[args.indexOf('--model')+1],'gpt-6.1-sol');
+    assert.equal(args[args.indexOf('--effort')+1],'high');
+  }finally{delete process.env.FAKE_ARGS_FILE;await f.cleanup();}
+});

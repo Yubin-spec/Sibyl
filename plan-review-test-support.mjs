@@ -55,7 +55,7 @@ export function makeFakeWorkers(verdicts, {hold = false} = {}) {
   return fake;
 }
 
-export async function reviewFixture({verdicts, hold = false, focus = true} = {}) {
+export async function reviewFixture({verdicts, hold = false, focus = true, config = {}} = {}) {
   const root = await mkdtemp(join(tmpdir(), 'plan-review-'));
   const project = join(root, 'project');
   const planPath = 'docs/superpowers/plans/demo.md';
@@ -82,7 +82,7 @@ body
   const service = createPlanReviewService({
     store,
     workers: fake,
-    config: {...DEFAULT_PLAN_REVIEW},
+    config: {...DEFAULT_PLAN_REVIEW, ...config},
     focusThread: async input => typeof focus === 'function' ? focus(input) : focus ? 'opened' : 'unknown',
     readConstraints: async () => '',
     reconcileMs: 10

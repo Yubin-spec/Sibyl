@@ -172,7 +172,8 @@ export function createPlanReviewService({
       risk: 'high',
       model: final ? config.reviewerFinalModel : config.reviewerModel,
       effort: config.reviewerEffort,
-      mcp: 'none'
+      mcp: 'none',
+      useProjectPolicy: false
     });
     record.workerId = started.workerId;
     record.threadId = started.threadId ?? null;
