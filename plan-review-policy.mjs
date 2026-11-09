@@ -373,30 +373,63 @@ export function writeCodexReviewSection(text, input = {}) {
   return updateFrontmatterReview(next, status);
 }
 
-export async function findPlanFiles(projectPath) {
+export async function findPlanFiles(projectPath, {strict = false, readdir: list = readdir} = {}) {
   const found = [];
-  async function walk(dir, prefix) {
+  if (!strict) {
+    async function walk(dir, prefix) {
+      let entries;
+      try {
+        entries = await list(dir, {withFileTypes: true});
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.name === '.sibyl' || entry.name === '.git' || entry.name === 'node_modules') continue;
+        if (entry.isSymbolicLink()) continue;
+        const relative = prefix ? prefix + '/' + entry.name : entry.name;
+        if (entry.isDirectory()) {
+          await walk(join(dir, entry.name), relative);
+        } else if (entry.isFile() && (
+          (relative.startsWith('docs/superpowers/plans/') && relative.endsWith('.md')) ||
+          (!relative.includes('/') && relative.endsWith('.plan.md'))
+        )) {
+          found.push(relative);
+        }
+      }
+    }
+    await walk(projectPath, '');
+    return found.sort();
+  }
+  let root;
+  try {
+    root = await list(projectPath, {withFileTypes: true});
+  } catch (error) {
+    throw Error('Project directory could not be scanned: . (' + (error?.message || error) + ')');
+  }
+  for (const entry of root) {
+    if (entry.isSymbolicLink()) continue;
+    if (entry.isFile() && entry.name.endsWith('.plan.md')) found.push(entry.name);
+  }
+  const plansRoot = join(projectPath, 'docs', 'superpowers', 'plans');
+  async function walkManaged(dir, prefix) {
     let entries;
     try {
-      entries = await readdir(dir, {withFileTypes: true});
-    } catch {
-      return;
+      entries = await list(dir, {withFileTypes: true});
+    } catch (error) {
+      if (prefix === 'docs/superpowers/plans' && error?.code === 'ENOENT') return;
+      throw Error('Plan directory could not be scanned: ' + prefix + ' (' + (error?.message || error) + ')');
     }
     for (const entry of entries) {
-      if (entry.name === '.sibyl' || entry.name === '.git' || entry.name === 'node_modules') continue;
       if (entry.isSymbolicLink()) continue;
-      const relative = prefix ? prefix + '/' + entry.name : entry.name;
+      const relative = prefix + '/' + entry.name;
       if (entry.isDirectory()) {
-        await walk(join(dir, entry.name), relative);
-      } else if (entry.isFile() && (
-        (relative.startsWith('docs/superpowers/plans/') && relative.endsWith('.md')) ||
-        (!relative.includes('/') && relative.endsWith('.plan.md'))
-      )) {
+        await walkManaged(join(dir, entry.name), relative);
+      } else if (entry.isFile() && relative.endsWith('.md')) {
         found.push(relative);
       }
     }
   }
-  await walk(projectPath, '');
+  await walkManaged(plansRoot, 'docs/superpowers/plans');
   return found.sort();
 }
 

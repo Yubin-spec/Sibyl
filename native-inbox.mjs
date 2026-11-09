@@ -4,6 +4,7 @@ import {join,basename} from 'node:path';
 import {randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
 import {listenLoopback} from './runtime.mjs';
 import {projectKey} from './project-path.mjs';
+import {gateWorkerStart} from './worker-gate.mjs';
 const PLAN_REVIEW_PROTOCOL='plan-review/v1';
 
 const validId=v=>typeof v==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(v);
@@ -105,6 +106,8 @@ async function createNativeInbox({dir,onChange=()=>{},now=Date.now,release,consu
           body.effort!==undefined&&!['low','medium','high','ultra'].includes(body.effort)||
           body.mcp!==undefined&&!['full','none'].includes(body.mcp)||!workerTimeout(body.timeoutMs))throw Error('Invalid worker start request');
         if(typeof worker.start!=='function')throw Error('Worker service is unavailable');
+        const gate=await gateWorkerStart({tier:body.tier,projectPath:s.projectPath,check:planReview.check});
+        if(!gate.allowed)throw Error(gate.reason);
         return send(202,await worker.start({session:{...publicSession(s),projectPath:s.projectPath},tool:body.tool,tier:body.tier,scope:body.scope,leadScope:body.leadScope,prompt:body.prompt,model:body.model,kind:body.kind,risk:body.risk,effort:body.effort,mcp:body.mcp,timeoutMs:body.timeoutMs}));
       }
       if(req.url==='/worker/turn'){

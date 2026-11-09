@@ -44,6 +44,7 @@ export function createPlanReviewService({
       return '';
     }
   },
+  fileSystem = {readFile},
   reconcileMs = 30000
 } = {}) {
   const records = new Map();
@@ -554,13 +555,17 @@ export function createPlanReviewService({
       .map(publicReview);
   }
 
-  async function check({projectPath, filePath, mode = 'ask'} = {}) {
+  async function check({projectPath, filePath, mode = 'ask', strict = false} = {}) {
     const project = resolve(projectPath);
     const plans = [];
-    for (const relativePath of await findPlanFiles(project)) {
+    for (const relativePath of await findPlanFiles(project, {strict, readdir: fileSystem.readdir})) {
       const absolute = join(project, relativePath);
       let text;
-      try { text = await readFile(absolute, 'utf8'); } catch { continue; }
+      try { text = await fileSystem.readFile(absolute, 'utf8'); }
+      catch (error) {
+        if (strict) throw Error('Plan could not be read: ' + relativePath + ' (' + (error?.message || error) + ')');
+        continue;
+      }
       const parsed = parsePlanDeclaration(text);
       const structural = isStructural(parsed);
       if (!structural.required) continue;
