@@ -63,6 +63,8 @@ description: Use when the user says "你和 Codex/Claude 协作", asks another l
 
 只有人明确要求换模型时才传 `model`；`bridge_worker_result`/`bridge_worker_list` 会回显实际使用的 `model` 和 `effort`。
 
+**项目覆盖：** 项目的 `.sibyl/models.json` 可以覆盖上表任意一档，只写需要改的 `model` / `effort`，其余沿用默认。优先级为「显式 `model` > 项目配置 > 默认表」，命中项目配置时 `modelReason` 带 `project:` 前缀。配置非法会让 worker 启动直接失败并给出文件路径与字段，不要靠改默认表绕过。
+
 **规则：**
 
 - `scope` 写项目相对路径，只列这次真的要改的目录/文件；共享文件（package.json、锁文件、tsconfig、.github/.claude 等）不能进 scope，工作方要改只能写进 `changeRequests`。主导方自己要改的路径用 `leadScope` 登记，工作方就不能占用。
