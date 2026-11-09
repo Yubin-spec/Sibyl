@@ -37,6 +37,11 @@ const validId = (v) => typeof v === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(v);
 const str = { type: "string" },
   wait = { type: "integer", minimum: 0, maximum: 25000, default: 25000 },
   consultWait = { type: "integer", minimum: 0, maximum: 25000 };
+const readOnlyTools = new Set([
+  "bridge_context",
+  "bridge_list_peers",
+  "bridge_list_sessions",
+]);
 
 // 工具定义是 AI 能看到的唯一契约；description 里明确“只读、不重发、不接管原聊天”。
 const definitions = [
@@ -121,6 +126,10 @@ const definitions = [
 ].map(([name, description, properties, required]) => ({
   name,
   description,
+  // 标注只读语义；部分客户端会据此提示或放行，Cursor CLI 仍需项目白名单。
+  ...(readOnlyTools.has(name)
+    ? { annotations: { readOnlyHint: true, idempotentHint: true } }
+    : {}),
   inputSchema: {
     type: "object",
     properties,

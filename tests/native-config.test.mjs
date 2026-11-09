@@ -18,14 +18,32 @@ test('native connector configuration preserves unrelated MCP settings and adds n
   assert.match(claudeRule,/bridge_context works before bridge_open_session/);
   await mod.configureNativeTool({project,tool:'claude',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'});
   assert.equal(await readFile(a.rulesPath,'utf8'),claudeRule);
+  await mkdir(join(project,'.cursor'),{recursive:true});
+  await writeFile(join(project,'.cursor','cli.json'),JSON.stringify({permissions:{allow:['Shell(ls)'],deny:['Shell(rm)']},extra:true}));
   const b=await mod.configureNativeTool({project,tool:'cursor',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'});
   assert.equal(b.configPath,join(project,'.cursor','mcp.json'));
+  assert.equal(b.permissionsPath,join(project,'.cursor','cli.json'));
   assert.equal(b.rulesPath,join(project,'.cursor','rules','agents-calling.mdc'));
   const cursorRule=await readFile(b.rulesPath,'utf8');
   assert.match(cursorRule,/alwaysApply: true/);
   assert.match(cursorRule,/Agents Calling bridge is available through MCP/);
+  const permissions=JSON.parse(await readFile(b.permissionsPath,'utf8'));
+  assert.equal(permissions.extra,true);
+  assert.deepEqual(permissions.permissions.deny,['Shell(rm)']);
+  assert.ok(permissions.permissions.allow.includes('Shell(ls)'));
+  for(const name of ['bridge_context','bridge_list_peers','bridge_list_sessions'])
+   assert.ok(permissions.permissions.allow.includes(`Mcp(ai-bridge:${name})`));
+  const permissionsText=await readFile(b.permissionsPath,'utf8');
+  await mod.configureNativeTool({project,tool:'cursor',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'});
+  assert.equal(await readFile(b.permissionsPath,'utf8'),permissionsText);
+  await writeFile(b.permissionsPath,JSON.stringify({permissions:{allow:['Shell(ls)']}}));
+  await mod.configureNativeTool({project,tool:'cursor',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'});
+  assert.deepEqual(JSON.parse(await readFile(b.permissionsPath,'utf8')).permissions.deny,[]);
   assert.ok(!JSON.stringify(config).includes('token'));assert.match(a.instructions,/原会话/);
   await assert.rejects(mod.configureNativeTool({project,tool:'unknown',dir:'/data'}),/Unsupported/);
+  await writeFile(join(project,'.cursor','cli.json'),'{broken');
+  await assert.rejects(mod.configureNativeTool({project,tool:'cursor',dir:'/data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'}),/Cursor permissions/);
+  assert.equal(await readFile(join(project,'.cursor','cli.json'),'utf8'),'{broken');
   await writeFile(join(project,'.mcp.json'),'{broken');
   await assert.rejects(mod.configureNativeTool({project,tool:'claude',dir:'/data'}),/JSON/);
   assert.equal(await readFile(join(project,'.mcp.json'),'utf8'),'{broken');
@@ -121,6 +139,8 @@ test('desktop-only configuration writes the desktop app config instead of a proj
   assert.deepEqual(JSON.parse(await readFile(cursorPath,'utf8')).mcpServers['ai-bridge'].args.slice(-2),['--tool','cursor']);
   assert.match(cursor.instructions,/Cursor Desktop/);
   assert.match(cursor.instructions,/无需单独安装 Cursor CLI/);
+  assert.equal(cursor.permissionsPath,null);
   await assert.rejects(readFile(join(project,'.cursor','mcp.json')),{code:'ENOENT'});
+  await assert.rejects(readFile(join(project,'.cursor','cli.json')),{code:'ENOENT'});
  }finally{await rm(project,{recursive:true,force:true});await rm(home,{recursive:true,force:true});}
 });

@@ -106,7 +106,7 @@ const instructions = {
   claude:
     "配置已写入。请在 Claude Code 原会话里用 /mcp 检查或重连 ai-bridge；若当前版本不能动态加载，续接原会话后再检查。任务可能涉及另一个 AI 工具负责的模块或跨项目契约时，先调用 bridge_context 只读查看目标；它无需登记，也不会创建会话。确认值得通信后，再调用 bridge_open_session 并主动调用 bridge_consult，只传工具名，不要让人转述；未绑定才使用当前项目。收到原会话问题后用 bridge_receive 接收、bridge_reply 回答；询问方用 bridge_ask/bridge_result 或 bridge_consult/bridge_consult_result 继续任务。",
   cursor:
-    "配置已写入。请在 Cursor 的 MCP 设置启用 ai-bridge，回到原会话确认工具可见；必要时重新加载窗口并保留原聊天。如果使用 Cursor CLI，先在项目目录执行 cursor-agent mcp enable ai-bridge；无界面运行还要按 Cursor 的审批策略允许 ai-bridge 工具调用。任务可能涉及另一个 AI 工具负责的模块时，先调用 bridge_context 只读查看目标，无需登记；确认需要通信后再调用 bridge_open_session 和 bridge_consult。用 bridge_receive 接收原会话问题并用 bridge_reply 回答。",
+    "配置已写入。请在 Cursor 的 MCP 设置启用 ai-bridge，回到原会话确认工具可见；必要时重新加载窗口并保留原聊天。如果使用 Cursor CLI，先在项目目录执行 cursor-agent mcp enable ai-bridge；只读发现工具已加入项目白名单，bridge_consult 等有副作用的调用仍按 Cursor 审批策略执行。任务可能涉及另一个 AI 工具负责的模块时，先调用 bridge_context 只读查看目标，无需登记；确认需要通信后再调用 bridge_open_session 和 bridge_consult。用 bridge_receive 接收原会话问题并用 bridge_reply 回答。",
   codex:
     '配置已写入。Codex 重新打开会话后确认 ai-bridge MCP 可见；该服务已设置 default_tools_approval_mode="approve"，只自动批准 ai-bridge 的工具调用，不改 Codex 其他审批设置。任务可能涉及另一个 AI 工具负责的模块或跨项目契约时，先调用 bridge_context 只读查看目标，无需登记；确认需要通信后再调用 bridge_open_session 和 bridge_consult，不要让人转述。用 bridge_receive/bridge_reply 收发原会话问题，目标项目由保存的绑定决定。',
   deepseek:
@@ -291,6 +291,69 @@ async function mergeMcpJson(configPath, entry) {
 }
 
 /**
+ * 只读发现工具在 Cursor CLI 中的免审批白名单。
+ *
+ * Cursor 不认 MCP 的 readOnlyHint，headless 运行时会直接拒绝未列入
+ * permissions.allow 的 MCP 调用；写入项目级 cli.json 后，
+ * bridge_context 等只读工具才能被 Agent 主动发现而不弹审批。
+ */
+const cursorReadOnlyTools = [
+  "bridge_context",
+  "bridge_list_peers",
+  "bridge_list_sessions",
+];
+
+/**
+ * 合并 Cursor 项目级权限白名单。
+ *
+ * 只追加只读发现工具，保留用户已有的 allow/deny 和其他字段；
+ * 不修改全局 cli-config.json，也不放行 bridge_consult 等有副作用的工具。
+ */
+async function mergeCursorReadPermissions(project) {
+  const configPath = join(resolve(project), ".cursor", "cli.json");
+  await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
+  let raw = null,
+    config = {};
+  try {
+    raw = await readFile(configPath, "utf8");
+    config = JSON.parse(raw);
+  } catch (e) {
+    if (e.code !== "ENOENT")
+      throw Error("Cannot update Cursor permissions: " + e.message);
+  }
+  if (!config || Array.isArray(config) || typeof config !== "object")
+    throw Error("Invalid Cursor permissions structure; original file preserved");
+  if (
+    config.permissions !== undefined &&
+    (!config.permissions ||
+      typeof config.permissions !== "object" ||
+      Array.isArray(config.permissions))
+  )
+    throw Error("Invalid Cursor permissions structure; original file preserved");
+  const permissions = config.permissions ?? {};
+  const allow = permissions.allow ?? [];
+  if (!Array.isArray(allow) || allow.some((entry) => typeof entry !== "string"))
+    throw Error("Invalid Cursor allow list; original file preserved");
+  const deny = permissions.deny ?? [];
+  if (!Array.isArray(deny) || deny.some((entry) => typeof entry !== "string"))
+    throw Error("Invalid Cursor deny list; original file preserved");
+  const additions = cursorReadOnlyTools
+    .map((tool) => `Mcp(ai-bridge:${tool})`)
+    .filter((entry) => !allow.includes(entry));
+  const changed = additions.length > 0 || permissions.deny === undefined;
+  if (changed) {
+    if (raw !== null) await backupOnce(configPath);
+    config.permissions = {
+      ...permissions,
+      allow: [...allow, ...additions],
+      deny,
+    };
+    await writeAtomic(configPath, JSON.stringify(config, null, 2) + "\n");
+  }
+  return configPath;
+}
+
+/**
  * 为指定 AI 工具写入 MCP 配置。
  *
  * desktopOnly 只对 Claude/Cursor 生效：用户没有独立 CLI 时必须写桌面 App 全局配置，
@@ -335,6 +398,10 @@ export async function configureNativeTool({
   };
   if (tool === "claude") entry.type = "stdio";
   await mergeMcpJson(configPath, entry);
+  const permissionsPath =
+    tool === "cursor" && !desktopOnly
+      ? await mergeCursorReadPermissions(project)
+      : null;
   const rulesPath = await mergeBridgeRule(
     rulePath ||
       (tool === "claude"
@@ -353,6 +420,7 @@ export async function configureNativeTool({
     : "登记与接收由原会话实际调用工具完成；配置成功不等于原会话已接入。bridge_consult 按预绑定项目启动只读托管咨询，但不会接管或唤醒目标原聊天。";
   return {
     configPath,
+    permissionsPath,
     rulesPath,
     tool,
     instructions:

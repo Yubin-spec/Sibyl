@@ -95,7 +95,10 @@ test('bridge_context exposes saved targets before session registration',async()=
  const inbox=await openNativeInbox({dir,context:async({session})=>{seen=session;return {server:'ai-bridge',caller:{tool:session.tool,title:session.title||null},targets:[{tool:'claude',projectName:'orders'}],guidance:{trigger:'call bridge_consult proactively'}};}});
  const mcp=client(dir,'codex');
  try{
-  const listed=await mcp.call('tools/list');assert.ok(listed.tools.some(t=>t.name==='bridge_context'));
+  const listed=await mcp.call('tools/list');
+  const contextTool=listed.tools.find(t=>t.name==='bridge_context');
+  assert.ok(contextTool);
+  assert.equal(contextTool.annotations.readOnlyHint,true);
   const preview=await mcp.tool('bridge_context');
   assert.equal(seen.tool,'codex');assert.equal(seen.title,undefined);assert.equal(seen.projectPath,process.cwd());
   assert.deepEqual(preview.targets,[{tool:'claude',projectName:'orders'}]);
