@@ -16,7 +16,7 @@ change:
 
 **Why:** Stop hook 和 PreToolUse 只覆盖 Claude 自己的文件工具。Codex worker 是独立进程，hooks 观测不到——现在一个未评审的结构计划可以被 `bridge_worker_start({tier:'dispatch'})` 直接实现掉。worker 启动本来就走 daemon，这是唯一 100% 可执行的拦截点。
 
-**Architecture:** 新增纯函数模块 `worker-gate.mjs` 做判定；`native-inbox.mjs` 的 `/worker/start` 在调用 `worker.start` 之前调用它。判定复用已有的 `planReview.check({projectPath, strict:true})`，不新增数据表和端点。为了真正 fail-closed，`plan-review.mjs` 与 `plan-review-policy.mjs` 增加严格模式：计划目录扫描失败、计划文件读取失败在严格模式下抛错，而不是像现在这样静默当作“没有计划”。
+**Architecture:** 新增纯函数模块 `worker-gate.mjs` 做判定；`native-inbox.mjs` 的 `/worker/start` 在调用 `worker.start` 之前调用它。判定复用已有的 `planReview.check({projectPath, strict:true})`，不新增数据表和端点。为了真正 fail-closed，`plan-review.mjs` 与 `plan-review-policy.mjs` 增加严格模式：计划目录扫描失败、计划文件读取失败、**已受管理计划的声明损坏**在严格模式下都拒绝；严格扫描逐层解析受管路径组件，符号链接或非目录组件按“没有受管计划目录”处理（与旧扫描跳过符号链接的语义一致），只有权限等真实 I/O 错误才抛错。
 
 **Tech Stack:** Node.js >= 26，零第三方依赖。
 
@@ -29,9 +29,10 @@ change:
 - `dispatch` / `parallel` 启动前调用 `planReview.check({projectPath, strict:true})`；`block:true` → 拒绝启动，错误信息带具体计划路径。
 - 检查结果必须显式 `block === false` 才放行；返回 `{}`、`{error:…}`、`{block:'true'}`、`null`、数组等不符合契约的结果 → 拒绝（fail-closed）。
 - 检查函数缺失或抛错 → 拒绝（fail-closed）。
+- 已受管理计划（已有评审记录或批准记录）的声明损坏 → 严格模式拒绝，原因带计划路径；普通无声明 Markdown 仍按非结构计划处理。
 - `consult` 完全不经过 gate（只读，且计划评审自身就是 consult）。
 - 没有 `projectPath` 的写型 worker → 拒绝。
-- 严格扫描：计划目录不可读、计划文件不可读 → 检查抛错 → gate 拒绝；只有目录正常不存在（ENOENT）才视为“没有计划”。
+- 严格扫描：受管路径组件逐层确认；`ENOENT`/`ENOTDIR`、符号链接、非目录组件 → 视为没有受管计划目录；权限等其它读取错误 → 检查抛错 → gate 拒绝。
 - 单元测试 + 一个 inbox 级集成测试（含负向断言：拒绝时不得调用 `worker.start`）。
 
 **不做（明确残留缺口）：**
@@ -79,13 +80,16 @@ change:
   - `check` 返回非对象、数组，或 `block` 不是布尔值 → `{allowed:false, reason:'Plan review returned an invalid result'}`。
   - `block === false` → `{allowed:true}`。
   - `block === true` → 拒绝；原因优先取 `result.reason`，但必须包含具体计划路径：若 `plans` 中存在 `approved === false` 的 `path` 且 reason 不含该路径，则用 `'结构计划未通过评审：' + path`；没有路径时退回 reason 或 `'结构计划未通过评审'`。
-- `plan-review-policy.mjs`：`findPlanFiles(projectPath, {strict = false, readdir: list = readdir} = {})`。
+- `plan-review-policy.mjs`：`findPlanFiles(projectPath, {strict = false, readdir: list = readdir, lstat: stat = lstat} = {})`。
   - 非严格：保持现有整项目递归扫描（行为不变）。
-  - 严格：**只扫描受管计划路径**——项目根目录的 `*.plan.md`，以及 `docs/superpowers/plans/**/*.md`；不再进入源码、缓存等无关目录。
-  - 严格模式下项目根 `readdir` 失败 → 抛 `Project directory could not be scanned: . (<message>)`；受管计划目录 `ENOENT` → 视为没有计划；受管计划目录其它读取错误 → 抛 `Plan directory could not be scanned: <受管相对路径> (<message>)`。
+  - 严格：只扫描受管计划路径——项目根目录的 `*.plan.md`，以及 `docs/superpowers/plans/**/*.md`；不再进入源码、缓存等无关目录。
+  - 严格模式逐层 `lstat` `docs`、`superpowers`、`plans`：任一组件不存在（`ENOENT`/`ENOTDIR`）、是符号链接或不是目录 → 视为没有受管计划目录（与旧扫描跳过符号链接一致），不访问链接目标；其它 `lstat` 错误 → 抛 `Plan directory could not be scanned: <已确认的相对路径> (<message>)`。
+  - 进入受管目录后递归时跳过符号链接条目，并继续排除 `.sibyl`、`.git`、`node_modules`（与旧扫描一致）；`readdir` 失败即抛同上错误。
+  - 严格模式下项目根 `readdir` 失败 → 抛 `Project directory could not be scanned: . (<message>)`。
 - `plan-review.mjs`：
-  - `check({projectPath, filePath, mode = 'ask', strict = false})`；第 560 行的调用必须改为 `await findPlanFiles(project, {strict, readdir: fileSystem.readdir})`。
-  - `createPlanReviewService` 增加仅供测试注入的 `fileSystem = {readdir, readFile}` 选项（默认真实 fs）；`check` 用 `fileSystem.readFile` 读取计划，严格模式下读取失败抛 `Plan could not be read: <relative> (<message>)`，非严格保持 `continue`。其余返回结构不变；`control.mjs` 不传该选项。
+  - `check({projectPath, filePath, mode = 'ask', strict = false})`；第 560 行的调用必须改为 `await findPlanFiles(project, {strict, readdir: fileSystem.readdir, lstat: fileSystem.lstat})`。
+  - 先查 `record`（同项目同路径的评审记录）与 `store.getPlanApproval(project, relativePath)`；**只在严格模式**下、在 `isStructural` 跳过之前判断 `strict && parsed.errors.length && (record || approval)` → 返回 `block:true`，原因 `受管理计划的声明已损坏：<relativePath>`。非严格模式保留原有顺序与条件（结构性判断之后 `parsed.errors.length && record`），不改变 hook 默认行为。
+  - `createPlanReviewService` 增加仅供测试注入的 `fileSystem = {readdir, readFile, lstat}` 选项（默认真实 fs）；`check` 用 `fileSystem.readFile` 读取计划，严格模式下读取失败抛 `Plan could not be read: <relative> (<message>)`，非严格保持 `continue`。其余返回结构不变；`control.mjs` 不传该选项。
 - `native-inbox.mjs`：`/worker/start` 在现有参数校验之后、`worker.start` 之前插入：
 
 ```js
@@ -209,7 +213,11 @@ test('strict check surfaces managed scan failures and ignores unrelated director
   // 2) docs/superpowers/plans 的 readdir 抛 EACCES：strict 抛错且错误含该目录与原始 message；非 strict 返回 block:false
   // 3) 项目根存在 unrelated-cache，注入 readdir 看到它时抛 EACCES：strict 不访问 unrelated-cache（spy 断言）且仍返回 block:false
   // 4) 计划文件读取抛 EACCES（fileSystem.readFile 注入）：strict 抛错且错误含计划相对路径；非 strict 跳过并返回 block:false
-  // 5) 上述 strict 抛错经 gateWorkerStart 转为 {allowed:false}
+  // 5) docs / docs/superpowers / plans 任一层 lstat 为符号链接或非目录：strict 不访问链接目标、返回 block:false
+  // 6) docs 为普通文件（lstat 返回非目录）：strict 返回 block:false，gate 允许
+  // 7) 已有评审/批准记录的 demo.plan.md 去掉 frontmatter 结束分隔符：strict 返回 block:true 且原因含路径；gate 拒绝；非 strict 行为与改动前一致
+  // 8) 受管目录下嵌套 .sibyl/.git/node_modules 中的 .md 不被收集（与旧扫描一致）
+  // 9) 上述 strict 抛错经 gateWorkerStart 转为 {allowed:false}
 });
 ```
 
@@ -221,8 +229,8 @@ Expected: FAIL（`Cannot find module './worker-gate.mjs'`）
 - [ ] **Step 3: 实现**
 
 - `worker-gate.mjs`：按 Interfaces 实现，只导出 `gateWorkerStart`；内部先判 tier，再判 projectPath、check、返回值契约。
-- `plan-review-policy.mjs`：`findPlanFiles(projectPath, {strict = false, readdir: list = readdir} = {})`。非严格分支保持现有整项目递归扫描；严格分支只扫描受管路径：项目根只收 `*.plan.md`（不递归子目录），再递归 `docs/superpowers/plans/**/*.md`。严格模式下项目根 `list` 失败 → 抛 `Project directory could not be scanned: . (<message>)`；受管目录 `ENOENT` → 跳过；其它受管目录读取失败 → 抛 `Plan directory could not be scanned: <受管相对路径> (<message>)`（用当前递归层的 `prefix`，不要引用未声明的 `relative`）。
-- `plan-review.mjs`：`createPlanReviewService` 增加 `fileSystem = {readdir, readFile}` 测试注入项（默认真实 fs，`control.mjs` 不传）；`check` 改为 `await findPlanFiles(project, {strict, readdir: fileSystem.readdir})`，并用 `fileSystem.readFile` 读取计划；严格模式读取失败时 `if (strict) throw Error('Plan could not be read: ' + relativePath + ' (' + error.message + ')');`。
+- `plan-review-policy.mjs`：`findPlanFiles(projectPath, {strict = false, readdir: list = readdir, lstat: stat = lstat} = {})`。非严格分支保持现有整项目递归扫描；严格分支先 `list` 项目根收 `*.plan.md`，再逐层 `lstat(join(current, part))` 确认 `docs`、`superpowers`、`plans`：`ENOENT`/`ENOTDIR`、`isSymbolicLink()` 或 `!isDirectory()` → 停止扫描视为没有受管目录；其它错误 → 抛 `Plan directory could not be scanned: <已确认部分> (<message>)`。进入受管目录后递归收集 `**/*.md`，跳过符号链接条目并排除 `.sibyl`、`.git`、`node_modules`，`readdir` 失败同样抛错。
+- `plan-review.mjs`：`createPlanReviewService` 增加 `fileSystem = {readdir, readFile, lstat}` 测试注入项（默认真实 fs，`control.mjs` 不传）；`check` 改为 `await findPlanFiles(project, {strict, readdir: fileSystem.readdir, lstat: fileSystem.lstat})`，并用 `fileSystem.readFile` 读取计划；先取 `record` 与 `approval`，严格模式下在结构性跳过之前判断 `strict && parsed.errors.length && (record || approval)` → 返回 `block:true`（原因 `受管理计划的声明已损坏：<relativePath>`）；非严格模式保持原顺序（结构性判断之后 `parsed.errors.length && record`）。严格模式读取失败时 `if (strict) throw Error('Plan could not be read: ' + relativePath + ' (' + error.message + ')');`。
 - `native-inbox.mjs`：`import {gateWorkerStart} from './worker-gate.mjs'`；按上面代码插入 gate。
 - 不改 `control.mjs`、`workers.mjs`；不改已有 `/plan-review/check` 端点与 hook 默认行为。
 
@@ -249,7 +257,8 @@ git commit -m "feat(worker): refuse write workers while a structural plan is una
 - 有未批准结构计划的项目：`bridge_worker_start({tier:'dispatch'})` 和 `{tier:'parallel'}` 被拒，错误信息含具体计划路径；拒绝时 `worker.start` 未被调用。
 - 同一项目：`bridge_worker_start({tier:'consult'})` 仍成功；`bridge_plan_review` 不受影响；检查器缺失或抛错时 consult 仍成功。
 - 没有计划文件的项目：dispatch 正常启动（现有 `worker-daemon.test.mjs` 通过）。
-- 检查返回异常结构、检查器缺失或抛错、严格扫描失败：全部拒绝启动，不静默放行。
+- 检查返回异常结构、检查器缺失或抛错、严格扫描失败、已受管理计划声明损坏：全部拒绝启动，不静默放行。
+- 无结构计划的项目（含 `docs` 为普通文件或符号链接的情况）：dispatch 正常启动。
 - 全量测试 0 fail。
 - 残留缺口写进 `docs/superpowers/plans/2026-11-08-plan-review-loop-core.md` 的已知限制：运行中的 worker、`turn`、`accept` 不在 gate 内。
 
@@ -257,9 +266,9 @@ git commit -m "feat(worker): refuse write workers while a structural plan is una
 ## Codex review
 
 - 状态：approved
-- 结论：完整复审后，严格参数传递、受管扫描边界、错误定位和确定性失败测试已明确，未发现 blocker/major；以下两项轻微修正可随实施完成。
+- 结论：已完整复审当前计划并核对调用链。R4 的目录排除规则和 R5 的非严格模式兼容顺序均已明确；consult 绕过、异常拒绝、路径定位及残留边界一致，未发现 blocker/major。六项纯单元测试及24项内存注入验证通过；需写临时目录的集成和全量测试未运行。
 - 评审模型：codex
 - 轮次：3
-- 采纳：R1, R2
+- 采纳：R4
 - 残留风险：
 <!-- SIBYL_REVIEW_END -->

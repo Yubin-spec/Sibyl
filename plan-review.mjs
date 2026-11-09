@@ -1,4 +1,4 @@
-import {readFile, writeFile, mkdir, realpath, stat, rename, rm} from 'node:fs/promises';
+import {readFile, writeFile, mkdir, realpath, stat, rename, rm, lstat} from 'node:fs/promises';
 import {resolve, relative, sep, join, dirname, basename} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {
@@ -44,7 +44,7 @@ export function createPlanReviewService({
       return '';
     }
   },
-  fileSystem = {readFile},
+  fileSystem = {readFile, lstat},
   reconcileMs = 30000
 } = {}) {
   const records = new Map();
@@ -558,7 +558,7 @@ export function createPlanReviewService({
   async function check({projectPath, filePath, mode = 'ask', strict = false} = {}) {
     const project = resolve(projectPath);
     const plans = [];
-    for (const relativePath of await findPlanFiles(project, {strict, readdir: fileSystem.readdir})) {
+    for (const relativePath of await findPlanFiles(project, {strict, readdir: fileSystem.readdir, lstat: fileSystem.lstat})) {
       const absolute = join(project, relativePath);
       let text;
       try { text = await fileSystem.readFile(absolute, 'utf8'); }
@@ -567,10 +567,13 @@ export function createPlanReviewService({
         continue;
       }
       const parsed = parsePlanDeclaration(text);
-      const structural = isStructural(parsed);
-      if (!structural.required) continue;
       const record = [...records.values()].find(item => item.planPath === relativePath && resolve(item.projectPath) === project);
       const approval = store.getPlanApproval?.(project, relativePath);
+      if (strict && parsed.errors.length && (record || approval)) {
+        return {block: true, mode: 'ask', reason: '受管理计划的声明已损坏：' + relativePath, plans};
+      }
+      const structural = isStructural(parsed);
+      if (!structural.required) continue;
       const approved = approval && approval.hashVersion === HASH_VERSION && approval.planHash === parsed.inputHash && ['approved'].includes(approval.status);
       plans.push({path: relativePath, hash: parsed.inputHash, approved, errors: parsed.errors, irreversible: parsed.change.irreversible});
       if (parsed.errors.length && record) return {block: true, mode: 'ask', reason: '受管理计划的声明已损坏：' + relativePath, plans};

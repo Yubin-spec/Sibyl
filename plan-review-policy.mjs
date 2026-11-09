@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {readdir} from 'node:fs/promises';
+import {readdir, lstat} from 'node:fs/promises';
 import {join} from 'node:path';
 
 export const PLAN_REVIEW_OPEN = '<<<SIBYL_REVIEW';
@@ -373,7 +373,7 @@ export function writeCodexReviewSection(text, input = {}) {
   return updateFrontmatterReview(next, status);
 }
 
-export async function findPlanFiles(projectPath, {strict = false, readdir: list = readdir} = {}) {
+export async function findPlanFiles(projectPath, {strict = false, readdir: list = readdir, lstat: stat = lstat} = {}) {
   const found = [];
   if (!strict) {
     async function walk(dir, prefix) {
@@ -410,26 +410,44 @@ export async function findPlanFiles(projectPath, {strict = false, readdir: list 
     if (entry.isSymbolicLink()) continue;
     if (entry.isFile() && entry.name.endsWith('.plan.md')) found.push(entry.name);
   }
-  const plansRoot = join(projectPath, 'docs', 'superpowers', 'plans');
-  async function walkManaged(dir, prefix) {
-    let entries;
+  let managedDir = null;
+  let current = projectPath;
+  const parts = ['docs', 'superpowers', 'plans'];
+  for (let index = 0; index < parts.length; index++) {
+    const next = join(current, parts[index]);
+    const prefix = parts.slice(0, index + 1).join('/');
+    let info;
     try {
-      entries = await list(dir, {withFileTypes: true});
+      info = await stat(next);
     } catch (error) {
-      if (prefix === 'docs/superpowers/plans' && error?.code === 'ENOENT') return;
+      if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') break;
       throw Error('Plan directory could not be scanned: ' + prefix + ' (' + (error?.message || error) + ')');
     }
-    for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
-      const relative = prefix + '/' + entry.name;
-      if (entry.isDirectory()) {
-        await walkManaged(join(dir, entry.name), relative);
-      } else if (entry.isFile() && relative.endsWith('.md')) {
-        found.push(relative);
+    if (info.isSymbolicLink() || !info.isDirectory()) break;
+    current = next;
+    if (index === parts.length - 1) managedDir = current;
+  }
+  if (managedDir) {
+    async function walkManaged(dir, prefix) {
+      let entries;
+      try {
+        entries = await list(dir, {withFileTypes: true});
+      } catch (error) {
+        throw Error('Plan directory could not be scanned: ' + prefix + ' (' + (error?.message || error) + ')');
+      }
+      for (const entry of entries) {
+        if (entry.name === '.sibyl' || entry.name === '.git' || entry.name === 'node_modules') continue;
+        if (entry.isSymbolicLink()) continue;
+        const relative = prefix + '/' + entry.name;
+        if (entry.isDirectory()) {
+          await walkManaged(join(dir, entry.name), relative);
+        } else if (entry.isFile() && relative.endsWith('.md')) {
+          found.push(relative);
+        }
       }
     }
+    await walkManaged(managedDir, 'docs/superpowers/plans');
   }
-  await walkManaged(plansRoot, 'docs/superpowers/plans');
   return found.sort();
 }
 

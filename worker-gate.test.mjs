@@ -116,14 +116,14 @@ for (const [label, planReview, pattern] of [
   });
 }
 
-const fakeStore = () => ({
+const fakeStore = (approval = null) => ({
   listPlanReviews: () => [],
   savePlanReview: () => {},
-  getPlanApproval: () => null
+  getPlanApproval: () => approval
 });
 
-function serviceWith(fileSystem) {
-  return createPlanReviewService({store: fakeStore(), workers: {}, fileSystem});
+function serviceWith(fileSystem, approval) {
+  return createPlanReviewService({store: fakeStore(approval), workers: {}, fileSystem});
 }
 
 test('strict check scans only managed plan paths and surfaces managed failures', async () => {
@@ -167,6 +167,69 @@ test('strict check scans only managed plan paths and surfaces managed failures',
     assert.equal((await readFail.check({projectPath: dir})).block, false);
 
     const gate = await gateWorkerStart({tier: 'dispatch', projectPath: dir, check: input => readFail.check(input)});
+    assert.equal(gate.allowed, false);
+    assert.match(gate.reason, /demo\.md/);
+  } finally { await rm(dir, {recursive: true, force: true}); }
+});
+
+test('strict check treats symlinked or non-directory components as no managed plans', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'worker-gate-paths-'));
+  await mkdir(join(dir, 'docs', 'superpowers', 'plans'), {recursive: true});
+  const calls = [];
+  try {
+    const component = kind => {
+      const lstatStub = async path => {
+        calls.push(['lstat', path]);
+        if (!path.endsWith('docs')) return {isSymbolicLink: () => false, isDirectory: () => true};
+        if (kind === 'symlink') return {isSymbolicLink: () => true, isDirectory: () => false};
+        if (kind === 'file') return {isSymbolicLink: () => false, isDirectory: () => false};
+        if (kind === 'denied') throw Object.assign(Error('EACCES: docs'), {code: 'EACCES'});
+        return {isSymbolicLink: () => false, isDirectory: () => true};
+      };
+      return {lstat: lstatStub, readdir: async (path, options) => {
+        calls.push(['readdir', path]);
+        if (path.includes('docs')) throw Error('must not read a symlinked or file docs path');
+        return readdir(path, options);
+      }};
+    };
+    for (const kind of ['symlink', 'file']) {
+      calls.length = 0;
+      const result = await serviceWith(component(kind)).check({projectPath: dir, strict: true});
+      assert.equal(result.block, false, kind);
+      assert.ok(calls.every(([operation, path]) => operation !== 'readdir' || !path.includes('docs')), kind);
+    }
+    const denied = serviceWith(component('denied'));
+    await assert.rejects(denied.check({projectPath: dir, strict: true}),
+      error => /docs/.test(error.message) && /EACCES/.test(error.message));
+  } finally { await rm(dir, {recursive: true, force: true}); }
+});
+
+test('strict check keeps excluding .sibyl, .git and node_modules inside the plans tree', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'worker-gate-excluded-'));
+  const plansDir = join(dir, 'docs', 'superpowers', 'plans');
+  try {
+    for (const name of ['.sibyl', '.git', 'node_modules']) {
+      const nested = join(plansDir, name);
+      await mkdir(nested, {recursive: true});
+      await writeFile(join(nested, 'hidden.md'), '---\nreview: required\nscope: [demo]\n---\n# Hidden\n');
+    }
+    const result = await serviceWith().check({projectPath: dir, strict: true});
+    assert.equal(result.block, false);
+    assert.deepEqual(result.plans, []);
+  } finally { await rm(dir, {recursive: true, force: true}); }
+});
+
+test('strict check refuses a managed plan whose declaration is damaged', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'worker-gate-broken-'));
+  const plansDir = join(dir, 'docs', 'superpowers', 'plans');
+  await mkdir(plansDir, {recursive: true});
+  try {
+    await writeFile(join(plansDir, 'demo.md'), '---\nreview: required\n# Demo plan\n');
+    const service = serviceWith(undefined, {reviewId: 'r1', planPath: 'docs/superpowers/plans/demo.md', hashVersion: 1, planHash: 'old', status: 'approved'});
+    const result = await service.check({projectPath: dir, strict: true});
+    assert.equal(result.block, true);
+    assert.match(result.reason, /demo\.md/);
+    const gate = await gateWorkerStart({tier: 'dispatch', projectPath: dir, check: input => service.check(input)});
     assert.equal(gate.allowed, false);
     assert.match(gate.reason, /demo\.md/);
   } finally { await rm(dir, {recursive: true, force: true}); }
