@@ -59,7 +59,8 @@ test("control publishes a private runtime descriptor and removes it on shutdown"
     assert.equal(runtime.appPid, process.pid);
     assert.equal(runtime.url, url);
     assert.equal(runtime.version, JSON.parse(await readFile(join(root, "package.json"), "utf8")).version);
-    assert.equal((await stat(runtimePath)).mode & 0o777, 0o600);
+    if (process.platform !== "win32")
+      assert.equal((await stat(runtimePath)).mode & 0o777, 0o600);
 
     const version = await fetch(url + "/api/version", {
       headers: { "x-bridge-ui": runtime.token },

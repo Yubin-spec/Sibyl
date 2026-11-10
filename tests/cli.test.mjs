@@ -34,7 +34,11 @@ else console.log(JSON.stringify({session_id:session,result,is_error:false}));
   for(const name of ['codex','claude','cursor-agent']) await writeFile(join(bin,name),fake,{mode:0o755});
   const listener=net.createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));const port=listener.address().port;await new Promise(r=>listener.close(r));
   const oldPath=process.env.PATH,oldData=process.env.BRIDGE_TEST_DATA;
-  process.env.PATH=bin+':'+dirname(process.execPath)+':/usr/bin:/bin';process.env.BRIDGE_TEST_DATA=dir;
+  // 假 CLI 是带 node shebang 的无扩展文件；Windows 用分号分隔 PATH。
+  const pathParts=[bin,dirname(process.execPath)];
+  if(process.platform==='win32'){if(process.env.SystemRoot)pathParts.push(join(process.env.SystemRoot,'System32'));}
+  else pathParts.push('/usr/bin','/bin');
+  process.env.PATH=pathParts.join(process.platform==='win32'?';':':');process.env.BRIDGE_TEST_DATA=dir;
   const server=spawn(process.execPath,[script,'serve','--state',join(dir,'state'),'--project',dir,'--port',String(port)],{stdio:['pipe','pipe','pipe']});
   let output='',approved=false;
   server.stdout.on('data',data=>{output+=data;const id=output.match(/approve ([a-f0-9-]{36})/)?.[1];if(id&&!approved){approved=true;server.stdin.write('approve '+id+'\n');}});

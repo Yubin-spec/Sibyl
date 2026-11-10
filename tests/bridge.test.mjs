@@ -105,7 +105,8 @@ const resume=args.indexOf('--resume')>=0?args[args.indexOf('--resume')+1]:null;
 console.log(JSON.stringify({session_id:'cursor-session',result:resume?'resumed':'first'}));
 `);
     await chmod(executable,0o755);
-    process.env.PATH=dir+':'+oldPath;
+    // Windows 的 PATH 分隔符是分号；假 CLI 本身是带 node shebang 的无扩展文件。
+    process.env.PATH=dir+(process.platform==='win32'?';':':')+oldPath;
     assert.equal((await agentRunner('cursor','first',null,null,dir)).result,'first');
     assert.equal((await agentRunner('cursor','next','cursor-session',null,dir)).result,'resumed');
   } finally {

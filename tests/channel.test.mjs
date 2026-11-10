@@ -22,7 +22,12 @@ async function fixture({limits, runner, connectionId = 'local', remote, credenti
   };
   const run = signal => runChannel({id:conversation.id, task:'修 bug', store, runner:wrapped, message, output, remote, credential, agents:{codex:'test', claude:'test'}, signal, op:{}, register:r => {control = r;}});
   message(conversation.id, {side:'human', text:'修 bug'});
-  return {dir, store, project, session, conversation, messages, events, calls, run, control:() => control, close:() => rm(dir, {recursive:true, force:true})};
+  // Windows 会锁住仍打开的 SQLite 文件，先关闭仓库再删临时目录。
+  const close = async () => {
+    try { store.close(); } catch {}
+    await rm(dir, {recursive:true, force:true, maxRetries:5, retryDelay:100});
+  };
+  return {dir, store, project, session, conversation, messages, events, calls, run, control:() => control, close};
 }
 
 const timeout = ms => new Promise((_, reject) => setTimeout(() => reject(Error('timeout ' + ms)), ms).unref?.());

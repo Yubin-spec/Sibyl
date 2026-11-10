@@ -4,9 +4,16 @@ import { mkdtemp, mkdir, rm, symlink, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// Windows 在 SQLite 文件仍被打开时不能 unlink；统一等所有测试关闭仓库后再清理。
+const roots = [];
+test.after(async () => {
+  for (const root of roots)
+    await rm(root, {recursive:true,force:true,maxRetries:5,retryDelay:100});
+});
+
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'workspace-'));
-  t.after(() => rm(root, {recursive:true,force:true}));
+  roots.push(root);
   const {openWorkspace} = await import('../src/app/workspace.mjs');
   const dir = join(root,'data');
   const w = await openWorkspace(dir);
@@ -28,7 +35,8 @@ test('persists defaults, stable identity, private database and interrupted recov
   assert.equal(reopened.snapshot().device.id,id); assert.equal(reopened.snapshot().device.name,"Bob's device");
   assert.equal(reopened.getConversation(c.id).status,'failed');
   assert.equal(reopened.getProject(p.id).name,"quoted ' project");
-  assert.equal((await stat(join(dir,'workspace.sqlite'))).mode & 0o777,0o600);
+  if (process.platform !== 'win32')
+    assert.equal((await stat(join(dir,'workspace.sqlite'))).mode & 0o777,0o600);
   assert.equal('messages' in reopened.snapshot(),false);
 });
 
