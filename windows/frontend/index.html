@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agents Calling</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+        background: #f2f2f7;
+        color: #1c1c1e;
+      }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at top, #ffffff 0%, #f2f2f7 54%, #e8eef8 100%);
+      }
+      main {
+        width: min(520px, calc(100vw - 48px));
+        padding: 32px;
+        border: 1px solid rgba(60, 60, 67, 0.12);
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.86);
+        box-shadow: 0 24px 70px rgba(0, 50, 120, 0.12);
+        text-align: center;
+      }
+      .mark {
+        width: 64px;
+        height: 64px;
+        margin: 0 auto 18px;
+        border-radius: 16px;
+        background: linear-gradient(145deg, #4cb8ff, #0878ff 48%, #0046c7);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+      }
+      h1 { margin: 0 0 10px; font-size: 24px; }
+      p { margin: 0; color: #6e6e73; line-height: 1.6; }
+      .detail { min-height: 26px; margin-top: 14px; font: 12px/1.6 ui-monospace, monospace; word-break: break-word; }
+      .failed .detail { color: #b42318; }
+      .failed .mark { background: linear-gradient(145deg, #ffb4ab, #d92d20); }
+      @media (prefers-color-scheme: dark) {
+        :root { background: #0b0b0f; color: #f5f5f7; }
+        body { background: radial-gradient(circle at top, #222633 0%, #0b0b0f 62%); }
+        main { border-color: rgba(255, 255, 255, 0.12); background: rgba(28, 28, 30, 0.9); }
+        p { color: #a1a1a6; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark" aria-hidden="true"></div>
+      <h1>Agents Calling</h1>
+      <p id="status">正在启动本机桥接服务…</p>
+      <p id="detail" class="detail"></p>
+    </main>
+  </body>
+</html>

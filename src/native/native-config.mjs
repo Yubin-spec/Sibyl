@@ -106,7 +106,7 @@ const instructions = {
   claude:
     "配置已写入。请在 Claude Code 原会话里用 /mcp 检查或重连 ai-bridge；若当前版本不能动态加载，续接原会话后再检查。任务可能涉及另一个 AI 工具负责的模块或跨项目契约时，先调用 bridge_context 只读查看目标；它无需登记，也不会创建会话。确认值得通信后，再调用 bridge_open_session 并主动调用 bridge_consult，只传工具名，不要让人转述；未绑定才使用当前项目。收到原会话问题后用 bridge_receive 接收、bridge_reply 回答；询问方用 bridge_ask/bridge_result 或 bridge_consult/bridge_consult_result 继续任务。",
   cursor:
-    "配置已写入。请在 Cursor 的 MCP 设置启用 ai-bridge，回到原会话确认工具可见；必要时重新加载窗口并保留原聊天。如果使用 Cursor CLI，先在项目目录执行 cursor-agent mcp enable ai-bridge；本地咨询所需的 bridge_context、bridge_open_session、bridge_consult、bridge_consult_result 和 bridge_consult_stop 已加入项目白名单。任务可能涉及另一个 AI 工具负责的模块时，先调用 bridge_context 只读查看目标，无需登记；确认需要通信后再调用 bridge_open_session 和 bridge_consult。用 bridge_receive 接收原会话问题并用 bridge_reply 回答。",
+    "配置已写入。请在 Cursor 的 MCP 设置启用 ai-bridge，回到原会话确认工具可见；必要时重新加载窗口并保留原聊天。如果使用 Cursor CLI，先在项目目录执行 cursor-agent mcp enable ai-bridge；只读发现工具会始终加入项目白名单，只有保存了目标项目绑定后才自动放行 bridge_open_session、bridge_consult、bridge_consult_result 和 bridge_consult_stop，未绑定时仍需在 Cursor 中确认。任务可能涉及另一个 AI 工具负责的模块时，先调用 bridge_context 只读查看目标，无需登记；确认需要通信后再调用 bridge_open_session 和 bridge_consult。用 bridge_receive 接收原会话问题并用 bridge_reply 回答。",
   codex:
     '配置已写入。Codex 重新打开会话后确认 ai-bridge MCP 可见；该服务已设置 default_tools_approval_mode="approve"，只自动批准 ai-bridge 的工具调用，不改 Codex 其他审批设置。任务可能涉及另一个 AI 工具负责的模块或跨项目契约时，先调用 bridge_context 只读查看目标，无需登记；确认需要通信后再调用 bridge_open_session 和 bridge_consult，不要让人转述。用 bridge_receive/bridge_reply 收发原会话问题，目标项目由保存的绑定决定。',
   deepseek:
@@ -119,6 +119,14 @@ const desktopInstructions = {
     "已写入 Cursor Desktop 的全局 MCP 配置。重启 Cursor 或在 MCP 设置中重新加载 ai-bridge，在对话中确认工具可用；任务可能涉及另一个 AI 工具负责的模块时，先调用 bridge_context 只读查看目标，无需登记。确认需要通信后再调用 bridge_open_session 和 bridge_consult，只传工具名；用 bridge_receive/bridge_reply 收发原会话问题。无需单独安装 Cursor CLI；桥接会使用 Cursor Desktop 自带启动器准备 agent 运行时。",
 };
 
+// Windows 技术版尚未对桌面 App 自带运行时做真机验收，因此提示用户显式配置可执行入口。
+const windowsDesktopInstructions = {
+  claude:
+    "已写入 Claude Desktop 的全局 MCP 配置。完全退出并重启 Claude Desktop，在对话中确认 ai-bridge 工具可用。Windows 版需要独立 Claude Code CLI；若诊断未发现，请安装后用 SIBYL_CLAUDE_PATH 指向真实入口。",
+  cursor:
+    "已写入 Cursor Desktop 的全局 MCP 配置。重启 Cursor 或在 MCP 设置中重新加载 ai-bridge，在对话中确认工具可用。Windows 版需要 Cursor CLI；若诊断未发现，请安装后用 SIBYL_CURSOR_PATH 指向真实入口。",
+};
+
 /**
  * 选择真正生效的 Claude Desktop 配置。
  *
@@ -126,6 +134,11 @@ const desktopInstructions = {
  * 优先写当前存在的 `Claude-3p`，否则回退到标准目录。
  */
 const claudeDesktopConfig = () => {
+  // Windows Claude Desktop 使用 Roaming AppData；路径与 macOS 的 Application Support 不同。
+  if (process.platform === "win32") {
+    const root = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
+    return join(root, "Claude", "claude_desktop_config.json");
+  }
   const root = join(homedir(), "Library", "Application Support");
   const current = join(root, "Claude-3p", "claude_desktop_config.json");
   return existsSync(current) || existsSync(dirname(current))
@@ -291,16 +304,24 @@ async function mergeMcpJson(configPath, entry) {
 }
 
 /**
- * Cursor CLI 本地桥接流程的免审批白名单。
+ * Cursor CLI 中始终免审批的只读发现工具。
  *
  * Cursor 不认 MCP 的 readOnlyHint，headless 运行时会直接拒绝未列入
- * permissions.allow 的 MCP 调用。除了只读发现工具，还必须放行登记、
- * 发起、查询结果和停止这几个调用；否则 Agent 能看见目标但无法完成咨询。
+ * permissions.allow 的 MCP 调用；这些工具只读取目标信息，可以安全自动放行。
  */
-const cursorAllowedTools = [
+const cursorReadOnlyTools = [
   "bridge_context",
   "bridge_list_peers",
   "bridge_list_sessions",
+];
+
+/**
+ * Cursor CLI 中仅在有明确项目绑定时才免审批的咨询工具。
+ *
+ * 这些调用会登记会话或启动只读 Worker，属于有副作用的操作；
+ * 未绑定目标项目时继续交给 Cursor 审批，避免 Agent 自行扩大权限。
+ */
+const cursorConsultTools = [
   "bridge_open_session",
   "bridge_consult",
   "bridge_consult_result",
@@ -311,9 +332,11 @@ const cursorAllowedTools = [
  * 合并 Cursor 项目级权限白名单。
  *
  * 只追加桥接自身工具，保留用户已有的 allow/deny 和其他字段；
- * 不修改全局 cli-config.json，也不放行其他 MCP 服务。
+ * allowConsult 仅在控制面确认已有目标项目绑定时设为 true。
+ * 未绑定时只清理连续出现的完整咨询工具块，避免旧版本自动写入的权限残留，
+ * 同时不误删用户零散手工添加的单项权限。
  */
-async function mergeCursorReadPermissions(project) {
+async function mergeCursorReadPermissions(project, { allowConsult = false } = {}) {
   const configPath = join(resolve(project), ".cursor", "cli.json");
   await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
   let raw = null,
@@ -341,15 +364,35 @@ async function mergeCursorReadPermissions(project) {
   const deny = permissions.deny ?? [];
   if (!Array.isArray(deny) || deny.some((entry) => typeof entry !== "string"))
     throw Error("Invalid Cursor deny list; original file preserved");
-  const additions = cursorAllowedTools
+  const consultEntries = cursorConsultTools.map(
+    (tool) => `Mcp(ai-bridge:${tool})`,
+  );
+  const consultStart = allow.findIndex((_, index) =>
+    consultEntries.every((entry, offset) => allow[index + offset] === entry),
+  );
+  const managedAllow =
+    !allowConsult && consultStart >= 0
+      ? allow.filter(
+          (_, index) =>
+            index < consultStart ||
+            index >= consultStart + consultEntries.length,
+        )
+      : allow;
+  const tools = allowConsult
+    ? [...cursorReadOnlyTools, ...cursorConsultTools]
+    : cursorReadOnlyTools;
+  const additions = tools
     .map((tool) => `Mcp(ai-bridge:${tool})`)
-    .filter((entry) => !allow.includes(entry));
-  const changed = additions.length > 0 || permissions.deny === undefined;
+    .filter((entry) => !managedAllow.includes(entry));
+  const changed =
+    additions.length > 0 ||
+    managedAllow.length !== allow.length ||
+    permissions.deny === undefined;
   if (changed) {
     if (raw !== null) await backupOnce(configPath);
     config.permissions = {
       ...permissions,
-      allow: [...allow, ...additions],
+      allow: [...managedAllow, ...additions],
       deny,
     };
     await writeAtomic(configPath, JSON.stringify(config, null, 2) + "\n");
@@ -362,6 +405,7 @@ async function mergeCursorReadPermissions(project) {
  *
  * desktopOnly 只对 Claude/Cursor 生效：用户没有独立 CLI 时必须写桌面 App 全局配置，
  * 否则原会话看不到 ai-bridge。Codex 和 DeepSeek 始终使用各自的用户级配置。
+ * allowConsult 由控制面根据是否已有目标绑定传入，只影响 Cursor CLI 白名单。
  */
 export async function configureNativeTool({
   project,
@@ -374,6 +418,7 @@ export async function configureNativeTool({
   desktopOnly = false,
   desktopConfigPath,
   rulePath,
+  allowConsult = false,
 } = {}) {
   if (!["claude", "cursor", "codex", "deepseek"].includes(tool))
     throw Error("Unsupported native tool");
@@ -404,7 +449,7 @@ export async function configureNativeTool({
   await mergeMcpJson(configPath, entry);
   const permissionsPath =
     tool === "cursor" && !desktopOnly
-      ? await mergeCursorReadPermissions(project)
+      ? await mergeCursorReadPermissions(project, { allowConsult })
       : null;
   const rulesPath = await mergeBridgeRule(
     rulePath ||
@@ -428,7 +473,11 @@ export async function configureNativeTool({
     rulesPath,
     tool,
     instructions:
-      (desktopOnly && desktopInstructions[tool]) || instructions[tool],
+      (desktopOnly &&
+        (process.platform === "win32"
+          ? windowsDesktopInstructions[tool]
+          : desktopInstructions[tool])) ||
+      instructions[tool],
     notice,
   };
 }

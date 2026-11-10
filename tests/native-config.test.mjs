@@ -32,11 +32,24 @@ test('native connector configuration preserves unrelated MCP settings and adds n
   assert.equal(permissions.extra,true);
   assert.deepEqual(permissions.permissions.deny,['Shell(rm)']);
   assert.ok(permissions.permissions.allow.includes('Shell(ls)'));
-  for(const name of ['bridge_context','bridge_list_peers','bridge_list_sessions','bridge_open_session','bridge_consult','bridge_consult_result','bridge_consult_stop'])
+  for(const name of ['bridge_context','bridge_list_peers','bridge_list_sessions'])
    assert.ok(permissions.permissions.allow.includes(`Mcp(ai-bridge:${name})`));
-  const permissionsText=await readFile(b.permissionsPath,'utf8');
+  for(const name of ['bridge_open_session','bridge_consult','bridge_consult_result','bridge_consult_stop'])
+   assert.ok(!permissions.permissions.allow.includes(`Mcp(ai-bridge:${name})`));
+  const readOnlyPermissions=await readFile(b.permissionsPath,'utf8');
   await mod.configureNativeTool({project,tool:'cursor',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'});
+  assert.equal(await readFile(b.permissionsPath,'utf8'),readOnlyPermissions);
+  await mod.configureNativeTool({project,tool:'cursor',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs',allowConsult:true});
+  const consultPermissions=JSON.parse(await readFile(b.permissionsPath,'utf8'));
+  for(const name of ['bridge_context','bridge_list_peers','bridge_list_sessions','bridge_open_session','bridge_consult','bridge_consult_result','bridge_consult_stop'])
+   assert.ok(consultPermissions.permissions.allow.includes(`Mcp(ai-bridge:${name})`));
+  const permissionsText=await readFile(b.permissionsPath,'utf8');
+  await mod.configureNativeTool({project,tool:'cursor',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs',allowConsult:true});
   assert.equal(await readFile(b.permissionsPath,'utf8'),permissionsText);
+  await mod.configureNativeTool({project,tool:'cursor',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'});
+  const downgraded=JSON.parse(await readFile(b.permissionsPath,'utf8')).permissions.allow;
+  for(const name of ['bridge_open_session','bridge_consult','bridge_consult_result','bridge_consult_stop'])
+   assert.ok(!downgraded.includes(`Mcp(ai-bridge:${name})`));
   await writeFile(b.permissionsPath,JSON.stringify({permissions:{allow:['Shell(ls)']}}));
   await mod.configureNativeTool({project,tool:'cursor',dir:'/private/bridge-data',nodePath:'/app/node',scriptPath:'/app/native-mcp.mjs'});
   assert.deepEqual(JSON.parse(await readFile(b.permissionsPath,'utf8')).permissions.deny,[]);

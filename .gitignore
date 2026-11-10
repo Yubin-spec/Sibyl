@@ -21,3 +21,8 @@
 .env
 .env.*
 !.env.example
+
+# Windows packaging inputs and Tauri build output are generated in CI.
+/runtime/windows/node.exe
+/src-tauri/target/
+/src-tauri/gen/

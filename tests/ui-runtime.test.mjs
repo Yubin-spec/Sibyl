@@ -75,3 +75,32 @@ test("control publishes a private runtime descriptor and removes it on shutdown"
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("control shuts down through the authenticated local API", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agents-calling-runtime-api-"));
+  const child = spawn(process.execPath, [controlPath, dir, String(process.pid)], {
+    cwd: root,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    const url = await waitForReady(child);
+    const runtimePath = join(dir, "ui-runtime.json");
+    const runtime = JSON.parse(await readFile(runtimePath, "utf8"));
+    const response = await fetch(url + "/api/shutdown", {
+      method: "POST",
+      headers: {
+        origin: url,
+        "x-bridge-ui": runtime.token,
+        "content-type": "application/json",
+      },
+      body: "{}",
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true });
+    await waitForExit(child);
+    await assert.rejects(readFile(runtimePath, "utf8"), { code: "ENOENT" });
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await rm(dir, { recursive: true, force: true });
+  }
+});

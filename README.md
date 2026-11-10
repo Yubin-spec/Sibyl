@@ -1,8 +1,8 @@
 # Agents Calling
 
-在同一网络中的 Mac 之间连接 AI 编程工具，减少开发问题由人转述的步骤。也支持本机不同工具之间交流。
+在同一网络中的 Mac / Windows 之间连接 AI 编程工具，减少开发问题由人转述的步骤。也支持本机不同工具之间交流。
 
-当前版本 **0.5.0**。桌面端使用 Swift / AppKit / 系统 WebView，桥接服务使用 Node.js，项目、讨论与核对线程使用 SQLite。无第三方 npm 依赖。
+当前版本 **0.5.0**。macOS 桌面端使用 Swift / AppKit / 系统 WebView；Windows 技术版使用 Tauri 2 / WebView2。桥接服务使用 Node.js，项目、讨论与核对线程使用 SQLite。无第三方 npm 依赖。
 
 下载安装包：[yubin-spec.github.io/Sibyl](https://yubin-spec.github.io/Sibyl/)（直达 GitHub Releases，无网盘或广告跳转）。App 的“设置 → 版本与更新”可直接检查并下载新版本。
 
@@ -26,6 +26,8 @@ AI_BRIDGE_NODE=/path/to/standalone/node npm run build
 
 构建产物是 `dist/Agents Calling.app`，内置构建时使用的 Node.js。构建脚本执行本地临时签名，未进行 Apple 开发者签名或公证。成品、安装包和运行数据由 `.gitignore` 排除。
 
+Windows 安装包由 GitHub Actions 的 `Windows desktop technical build` 工作流构建。工作流使用 Node.js 26，把 `node.exe` 打进 Tauri 资源，并产出 NSIS 安装器。当前是技术预览：代码和构建链已就位，但没有 Windows 真机验收；安装包未签名，SmartScreen 可能拦截。详见 [Windows 桌面版说明](docs/Windows-desktop.md)。
+
 ## 能力与验证边界
 
 - 六个页面：会话、运行台、电脑、本机 AI、项目、设置。
@@ -34,7 +36,7 @@ AI_BRIDGE_NODE=/path/to/standalone/node npm run build
 - 原 AI 会话内跨工具核对：在“本机 AI”配置项目 MCP 时一并绑定“询问方项目 + 目标工具 → 目标项目”。Agent 先调用 `bridge_open_session`，再用 `bridge_context` 查看已保存目标；需要核对时主动调用 `bridge_consult`，只传工具名即可在后台启动隔离的只读 Worker，并立即返回 `consultId`。未绑定才回退当前项目，不接管目标原聊天。
 - 核对线程与止损：同一来源会话续接同一 Worker 线程；精确重复请求复用原线程；由代码执行 10 分钟 12 次预算、同目标 2 个并发上限、3 分钟总时长、2 分钟无进展停止。App“运行台”显示路由、轮次、进展、结果与停止原因。
 - 待处理队列：运行台顶部只显示一项最需要人工处理的事项，侧边栏显示数量；可逐项同意/拒绝配对、查看停止的核对或打开失败会话。非配对项支持“稍后处理”并持久化，避免重复打扰。
-- Claude Code / Cursor 项目级 MCP 配置，Codex 用户级 MCP 配置（仅对 ai-bridge 工具自动审批），DeepSeek Harness 桌面 profile 用户 patch 层配置；只安装 Claude/Cursor 桌面 App 时自动写入桌面全局 MCP 配置。原聊天登记、定向收件、询问与答复回传。
+- Claude Code / Cursor 项目级 MCP 配置，Codex 用户级 MCP 配置（仅对 ai-bridge 工具自动审批），DeepSeek Harness 桌面 profile 用户 patch 层配置；只安装 Claude/Cursor 桌面 App 时自动写入桌面全局 MCP 配置。Cursor CLI 未绑定目标时只自动放行只读发现工具，保存绑定后才放行本地咨询链路。原聊天登记、定向收件、询问与答复回传。
 
 专用 CLI 讨论与原工具已有聊天是两种接入方式。桌面 App 检测不依赖终端 PATH；Codex、DeepSeek Harness 和 Claude Desktop 可直接发现 App 内置运行时，Cursor 可通过桌面 App 自带启动器准备 agent 运行时。只装桌面 App 时仍可配置原会话 MCP；运行时尚未准备好时，本机诊断和托管咨询会明确提示，不会伪装成已可用。普通 MCP 需要原聊天调用收信/查询工具，不能自动唤醒未接收消息的空闲聊天。原会话 ID 备注不代表独立核验或接管聊天。
 
@@ -53,12 +55,15 @@ AI_BRIDGE_NODE=/path/to/standalone/node npm run build
 | `src/native/native-inbox.mjs` / `native-mcp.mjs` | 原聊天收件与 MCP 工具 |
 | `src/native/native-config.mjs` | 合并 Claude/Cursor 项目 MCP、Codex 用户级配置与 DeepSeek Harness 用户 patch 层配置 |
 | `src/platform/claude-diagnostics.mjs` / `update.mjs` | 脱敏诊断摘要与远程更新检查 |
+| `src/platform/runtime.mjs` / `project-path.mjs` | Windows 命令入口解析、Claude 环境合并与项目路径身份 |
+| `src-tauri/` / `windows/frontend/` | Windows Tauri 壳、图标与启动页 |
+| `.github/workflows/windows-desktop.yml` | Windows Node 测试、Tauri 构建与安装包产物 |
 | `tests/*.test.mjs` | 自动测试 |
 | `macos/build-app.sh` | macOS 打包与临时签名 |
 
 ## 数据与提交
 
-桌面运行数据保存在 `~/Library/Application Support/AI Bridge/`（目录名沿用旧版，改名不会迁移或丢失历史），包含配对凭证与聊天记录，不能放进代码仓库。CLI 默认使用的 `.bridge-state/` 和 `.bridge-connections/` 也已排除。
+macOS 桌面运行数据保存在 `~/Library/Application Support/AI Bridge/`；Windows 技术版保存在 `%LOCALAPPDATA%\AI Bridge`。目录名沿用旧版，包含配对凭证与聊天记录，不能放进代码仓库。CLI 默认使用的 `.bridge-state/` 和 `.bridge-connections/` 也已排除。
 
 开发过程笔记保留在本机 `.codex-local/` 等目录，使用 Git 本地排除规则，不作为项目内容提交。仓库未复制历史安装包、实际配对凭证、模型密钥或个人机器专用启动脚本。
 

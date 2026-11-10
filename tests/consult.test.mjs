@@ -115,3 +115,31 @@ test('MCP configuration saves the target project binding before any session is r
   await assert.rejects(call('/api/tools/connect',{projectId:source.id,agent:'claude',targetTool:'codex'}),/目标工具和目标项目需要一起选择/);
  }finally{await control.close();await rm(dir,{recursive:true,force:true});}
 });
+
+test('Cursor consultation tools are auto-approved only after a target binding exists',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'cursor-permissions-'));
+ const control=await createControl({dir,detect:async()=>({cursor:'test'}),detectStandalone:async()=>({cursor:'test'}),runner:async()=>({session_id:'unused',result:'unused'})});
+ await new Promise(resolve=>control.server.listen(0,'127.0.0.1',resolve));
+ try{
+  const base=`http://127.0.0.1:${control.server.address().port}`;
+  const call=async(path,body)=>{const response=await fetch(base+path,{method:'POST',headers:{origin:base,'x-bridge-ui':control.csrf,'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();assert.ok(response.ok,JSON.stringify(value));return value;};
+  const source=control.store.saveProject({name:'source',path:dir});
+  await mkdir(join(dir,'target'));const target=control.store.saveProject({name:'target',path:join(dir,'target')});
+  const permissionsPath=join(dir,'.cursor','cli.json');
+  const readOnly=['bridge_context','bridge_list_peers','bridge_list_sessions'],consult=['bridge_open_session','bridge_consult','bridge_consult_result','bridge_consult_stop'];
+  await call('/api/tools/connect',{projectId:source.id,agent:'cursor'});
+  let allow=JSON.parse(await readFile(permissionsPath,'utf8')).permissions.allow;
+  for(const name of readOnly) assert.ok(allow.includes(`Mcp(ai-bridge:${name})`));
+  for(const name of consult) assert.ok(!allow.includes(`Mcp(ai-bridge:${name})`));
+  await call('/api/tools/connect',{projectId:source.id,agent:'cursor',targetTool:'codex',targetProjectId:target.id});
+  allow=JSON.parse(await readFile(permissionsPath,'utf8')).permissions.allow;
+  for(const name of [...readOnly,...consult]) assert.ok(allow.includes(`Mcp(ai-bridge:${name})`));
+  const status=await (await fetch(base+'/api/status',{headers:{'x-bridge-ui':control.csrf}})).json();
+  assert.deepEqual(status.bindings,[{sourceProjectId:source.id,targetTool:'codex',targetProjectId:target.id}]);
+  await call('/api/bindings/delete',{sourceProjectId:source.id,targetTool:'codex'});
+  await call('/api/tools/connect',{projectId:source.id,agent:'cursor'});
+  allow=JSON.parse(await readFile(permissionsPath,'utf8')).permissions.allow;
+  for(const name of readOnly) assert.ok(allow.includes(`Mcp(ai-bridge:${name})`));
+  for(const name of consult) assert.ok(!allow.includes(`Mcp(ai-bridge:${name})`));
+ }finally{await control.close();await rm(dir,{recursive:true,force:true});}
+});

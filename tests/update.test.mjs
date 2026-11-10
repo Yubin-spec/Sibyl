@@ -9,16 +9,19 @@ test('version comparison follows numeric segments',()=>{
   assert.equal(newerVersion('1.0.0','0.9.9'),true);
 });
 
-test('only trusted GitHub DMG assets are offered for download',()=>{
+test('only trusted GitHub installers for the current platform are offered for download',()=>{
   const release={tag_name:'v0.3.1',assets:[
     {name:'notes.txt',browser_download_url:'https://github.com/x/y/releases/download/v0.3.1/notes.txt',size:1},
     {name:'AI-Bridge-0.3.1-arm64.dmg',browser_download_url:'https://github.com/x/y/releases/download/v0.3.1/AI-Bridge-0.3.1-arm64.dmg',size:10},
+    {name:'Agents-Calling-0.3.1-x64.msi',browser_download_url:'https://github.com/x/y/releases/download/v0.3.1/Agents-Calling-0.3.1-x64.msi',size:30},
+    {name:'Agents-Calling-0.3.1-x64-setup.exe',browser_download_url:'https://github.com/x/y/releases/download/v0.3.1/Agents-Calling-0.3.1-x64-setup.exe',size:20},
     {name:'evil.dmg',browser_download_url:'https://example.com/evil.dmg',size:10}
   ]};
-  assert.equal(pickInstaller(release).name,'AI-Bridge-0.3.1-arm64.dmg');
+  assert.equal(pickInstaller(release,'darwin').name,'AI-Bridge-0.3.1-arm64.dmg');
+  assert.equal(pickInstaller(release,'win32').name,'Agents-Calling-0.3.1-x64-setup.exe');
   assert.equal(trustedAsset('http://github.com/x.dmg'),false);
   assert.equal(trustedAsset('https://objects.githubusercontent.com/x.dmg'),true);
-  const info=updateInfo('0.3.0',release);
+  const info=updateInfo('0.3.0',release,'win32');
   assert.equal(info.available,true);
   assert.equal(info.latest,'0.3.1');
 });

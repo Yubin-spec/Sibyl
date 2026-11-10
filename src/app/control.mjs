@@ -24,8 +24,7 @@ import {
   rename,
   rm,
 } from "node:fs/promises";
-import { realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomBytes, randomUUID } from "node:crypto";
 import { networkInterfaces, hostname } from "node:os";
@@ -41,6 +40,8 @@ import { openWorkspace } from "./workspace.mjs";
 import { openNativeInbox } from "../native/native-inbox.mjs";
 import { runChannel } from "../bridge/channel.mjs";
 import { latestRelease, updateInfo } from "../platform/update.mjs";
+import { defaultDataDir } from "../platform/runtime.mjs";
+import { projectKey } from "../platform/project-path.mjs";
 import {
   DEFAULT_CONSULT_LIMITS,
   normalizeConsultLimits,
@@ -73,7 +74,8 @@ const version = JSON.parse(
  * - detectStandalone：只检测独立 CLI，用于决定 MCP 配置写到哪；
  * - runner：真正调用 AI 的执行器，测试里可替换成假实现；
  * - healthInterval：刷新 peer 在线状态和 SSE 保活的心跳间隔；
- * - consultLimits：只读核对的预算、并发和超时限制。
+ * - consultLimits：只读核对的预算、并发和超时限制；
+ * - onShutdown：桌面宿主提供的优雅退出回调；浏览器直接启动时为空。
  *
  * 返回一个只在 127.0.0.1 监听的 HTTP server，以及 close() 清理入口。
  * 所有外部依赖都从参数注入，生产入口使用默认值，测试可以完全离线运行。
@@ -86,6 +88,7 @@ export async function createControl({
     agentRunner(agent, prompt, session, signal, project, options),
   healthInterval = 15000,
   consultLimits = {},
+  onShutdown = null,
 } = {}) {
   // 连接凭证包含配对 token；目录权限收紧到当前用户，避免同机其他账号读取。
   await mkdir(join(dir, "connections"), { recursive: true, mode: 0o700 });
@@ -131,7 +134,8 @@ export async function createControl({
           ) || null
         : session.projectPath
           ? snapshot.projects.find(
-              (project) => project.path === realpathSync(session.projectPath),
+              (project) =>
+                projectKey(project.path) === projectKey(session.projectPath),
             ) || null
           : null;
     } catch {}
@@ -442,23 +446,23 @@ export async function createControl({
   const checkUpdate = async () => {
     if (updateCache && Date.now() - updateCache.at < 300000)
       return updateCache.info;
-    const info = updateInfo(version, await latestRelease());
+    const info = updateInfo(version, await latestRelease(), process.platform);
     updateCache = { at: Date.now(), info };
     return info;
   };
 
   /**
-   * 下载并打开最新 DMG 安装包。
+   * 下载并打开当前平台的最新安装包。
    *
    * 下载前校验：
-   * - 发布里确实有 DMG；
+   * - 发布里确实有当前平台的安装包；
    * - 声明大小不超过 300MB。
    * 下载后再次校验响应状态、实际大小和声明大小，
-   * 防止把错误页或超大文件写到本地。下载完成后交给系统 open 打开。
+   * 防止把错误页或超大文件写到本地。下载完成后交给系统安装器打开。
    */
   const downloadUpdate = async () => {
     const info = await checkUpdate();
-    if (!info.installer) throw Error("当前发布没有可下载的 DMG 安装包");
+    if (!info.installer) throw Error("当前发布没有可下载的安装包");
     if (info.installer.size > 300_000_000)
       throw Error("安装包超过 300MB，已停止下载");
     const folder = join(dir, "updates");
@@ -477,7 +481,17 @@ export async function createControl({
     )
       throw Error("安装包内容与发布信息不一致");
     await writeFile(target, data, { mode: 0o600 });
-    spawn("open", [target], { detached: true, stdio: "ignore" }).unref();
+    if (process.platform === "win32")
+      spawn("cmd.exe", ["/d", "/s", "/c", `start "" "${target}"`], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      }).unref();
+    else
+      spawn(process.platform === "darwin" ? "open" : "xdg-open", [target], {
+        detached: true,
+        stdio: "ignore",
+      }).unref();
     return { path: target, name: info.installer.name, version: info.latest };
   };
 
@@ -664,7 +678,8 @@ export async function createControl({
       source = snapshot.projects.find((p) => {
         try {
           return (
-            session.projectPath && p.path === realpathSync(session.projectPath)
+            session.projectPath &&
+            projectKey(p.path) === projectKey(session.projectPath)
           );
         } catch {
           return false;
@@ -1084,7 +1099,7 @@ export async function createControl({
       ? store.getProject(body.projectId)
       : body.project
         ? store.saveProject({
-            name: body.project.split("/").filter(Boolean).at(-1) || "Project",
+            name: basename(body.project) || "Project",
             path: body.project,
           })
         : null;
@@ -1101,7 +1116,9 @@ export async function createControl({
 
       // 远端请求不能抢占本机正在使用的同一项目工具。
       runner: async (...args) => {
-        const p = store.snapshot().projects.find((p) => p.path === args[3]);
+        const p = store
+          .snapshot()
+          .projects.find((p) => projectKey(p.path) === projectKey(args[3]));
         if (
           p &&
           operations.some(
@@ -1553,6 +1570,14 @@ export async function createControl({
       }
       const body = JSON.parse(raw || "{}");
       let result = { ok: true };
+      // Windows 桌面壳需要先关闭 SQLite、收件箱和后台任务，再退出宿主进程。
+      // 只有宿主显式注入回调时才开放；普通浏览器/CLI 启动仍然返回错误。
+      if (path === "/api/shutdown") {
+        if (!onShutdown) throw Error("Shutdown is not available for this host");
+        send(200, { ok: true });
+        setImmediate(() => onShutdown());
+        return;
+      }
       if (path === "/api/update/download") {
         result = await downloadUpdate();
         send(200, result);
@@ -1775,18 +1800,23 @@ export async function createControl({
         const { configureNativeTool } = await import(
           "../native/native-config.mjs"
         );
-        result = await configureNativeTool({
-          project: p.path,
-          tool,
-          dir,
-          desktopOnly: !!desktopApps[tool] && !standaloneAgents[tool],
-        });
         if (body.targetTool)
           store.saveBinding({
             sourceProjectId: p.id,
             targetTool: body.targetTool,
             targetProjectId: body.targetProjectId,
           });
+        // 只有来源项目已有明确目标绑定时，Cursor 才自动放行会启动 Worker 的咨询工具。
+        const allowConsult = store
+          .snapshot()
+          .bindings.some((binding) => binding.sourceProjectId === p.id);
+        result = await configureNativeTool({
+          project: p.path,
+          tool,
+          dir,
+          desktopOnly: !!desktopApps[tool] && !standaloneAgents[tool],
+          allowConsult,
+        });
       } else if (path === "/api/tools/diagnose") {
         const p = store.getProject(body.projectId);
         if (!Object.hasOwn(agents, body.agent))
@@ -1985,14 +2015,12 @@ if (
 ) {
   const dir =
     process.argv[2] ||
-    join(process.env.HOME, "Library", "Application Support", "AI Bridge");
+    defaultDataDir();
   // Swift 外壳会传入自己的 PID；CLI 直接启动时没有这个参数。
   // 这个归属信息让下一次启动能区分“仍在使用的后台”和“App 崩溃后遗留的后台”。
   const appPid = Number(process.argv[3]) || null;
   const runtimeFile = join(dir, "ui-runtime.json");
   const runtimeNonce = randomUUID();
-  const control = await createControl({ dir });
-
   /**
    * 删除本进程写下的 UI 运行描述。
    *
@@ -2005,6 +2033,17 @@ if (
       if (owner.nonce === runtimeNonce) await rm(runtimeFile, { force: true });
     } catch {}
   };
+
+  // Tauri/Swift 外壳可以调用本机认证的 /api/shutdown，让控制面先落盘再退出。
+  const shutdown = async () => {
+    try {
+      await control.close();
+    } finally {
+      await clearRuntime();
+      process.exit(0);
+    }
+  };
+  const control = await createControl({ dir, onShutdown: shutdown });
 
   control.server.listen(0, "127.0.0.1", async () => {
     const url = `http://127.0.0.1:${control.server.address().port}`;

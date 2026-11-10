@@ -1,0 +1,23 @@
+[package]
+name = "agents-calling-windows"
+version = "0.5.0"
+description = "Agents Calling Windows desktop shell"
+authors = ["Yubin-spec"]
+edition = "2021"
+build = "build.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"
+url = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

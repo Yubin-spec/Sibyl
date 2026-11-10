@@ -1,7 +1,7 @@
 /**
  * GitHub Release 更新检查。
  *
- * 只接受固定仓库和受信任 GitHub 域名下的 DMG，避免把更新检查变成任意下载入口。
+ * 只接受固定仓库和受信任 GitHub 域名下的平台安装包，避免把更新检查变成任意下载入口。
  * 本模块只返回更新信息，不自动安装。
  */
 const RELEASE_URL =
@@ -56,17 +56,29 @@ export function trustedAsset(value) {
 }
 
 /**
- * 从 release assets 里选 DMG。
+ * 从 release assets 里选当前平台的安装包。
  *
- * 只接受 .dmg 且下载地址通过 trustedAsset 校验的资产。
+ * macOS 选 .dmg，Windows 优先 .exe（NSIS）再选 .msi，
+ * 其他平台选 AppImage；下载地址必须通过 trustedAsset 校验。
  */
-export function pickInstaller(release) {
+export function pickInstaller(release, platform = process.platform) {
   const assets = Array.isArray(release?.assets) ? release.assets : [];
-  const asset = assets.find(
-    (item) =>
-      /\.dmg$/i.test(item?.name || "") &&
-      trustedAsset(item?.browser_download_url),
-  );
+  const extensions =
+    platform === "win32"
+      ? [/\.exe$/i, /\.msi$/i]
+      : platform === "darwin"
+        ? [/\.dmg$/i]
+        : [/\.AppImage$/i];
+  let asset = null;
+  // 按扩展名优先级查找，避免 Windows 同时发布 exe 和 msi 时受资产顺序影响。
+  for (const pattern of extensions) {
+    asset = assets.find(
+      (item) =>
+        pattern.test(item?.name || "") &&
+        trustedAsset(item?.browser_download_url),
+    );
+    if (asset) break;
+  }
   return asset
     ? {
         name: asset.name,
@@ -81,7 +93,7 @@ export function pickInstaller(release) {
  *
  * 返回当前版本、最新版本、是否有更新、安装包元数据、发布说明和页面地址。
  */
-export function updateInfo(current, release) {
+export function updateInfo(current, release, platform = process.platform) {
   const latest = release
     ? String(release.tag_name || "").replace(/^v/i, "")
     : null;
@@ -89,7 +101,7 @@ export function updateInfo(current, release) {
     current,
     latest,
     available: !!latest && newerVersion(latest, current),
-    installer: pickInstaller(release),
+    installer: pickInstaller(release, platform),
     notes: release ? String(release.body || "").slice(0, 2000) : "",
     page: release?.html_url || "",
   };

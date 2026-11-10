@@ -7,17 +7,17 @@
  */
 import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline";
 import { makeClient } from "../bridge/bridge.mjs";
+import { defaultDataDir } from "../platform/runtime.mjs";
 
 const { values } = parseArgs({
   options: {
     dir: {
       type: "string",
-      default: join(homedir(), "Library", "Application Support", "AI Bridge"),
+      default: defaultDataDir(),
     },
     tool: { type: "string", default: "claude" },
   },

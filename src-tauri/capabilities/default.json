@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The shell does not expose Tauri IPC to the localhost UI.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

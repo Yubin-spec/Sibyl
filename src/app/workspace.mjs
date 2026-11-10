@@ -10,10 +10,13 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import { mkdir, chmod } from "node:fs/promises";
-import { realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
+import {
+  canonicalProjectPath,
+  projectKey,
+} from "../platform/project-path.mjs";
 
 const tools = ["claude", "codex", "cursor", "deepseek"];
 const statuses = [
@@ -394,19 +397,19 @@ export async function openWorkspace(dir) {
     saveProject(input) {
       return transaction(() => {
         const name = text(input.name, "name");
-        const path = realpathSync(text(input.path, "path"));
-        if (!statSync(path).isDirectory())
-          throw new Error("Project path must be a directory");
-        const duplicate = db
-          .prepare("SELECT data FROM projects WHERE path=?")
-          .get(path);
+        const path = canonicalProjectPath(text(input.path, "path"));
+        // SQLite 的 UNIQUE(path) 区分大小写；Windows 上必须按规范化身份查重。
+        const key = projectKey(path);
+        const duplicate = list("projects").find(
+          (project) => projectKey(project.path) === key,
+        );
 
         // 相同路径重复添加时直接返回已有项目，避免用户看到重复条目。
         if (duplicate && input.id === undefined)
-          return JSON.parse(duplicate.data);
+          return duplicate;
 
         // 另一个项目已经占用该路径时拒绝，保证路径唯一。
-        if (duplicate && JSON.parse(duplicate.data).id !== input.id)
+        if (duplicate && duplicate.id !== input.id)
           throw new Error("Project path already exists");
         const id = input.id === undefined ? randomUUID() : text(input.id, "id");
         const previous = db

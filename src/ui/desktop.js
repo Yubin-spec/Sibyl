@@ -2111,7 +2111,7 @@ startEvents();
 /**
  * 渲染版本更新信息。
  *
- * 显示当前版本、最新版本和是否有可下载的 DMG；
+ * 显示当前版本、最新版本和是否有可下载的平台安装包；
  * 没有安装包时隐藏下载按钮，避免点了才报错。
  */
 function renderUpdate(info) {
@@ -2119,12 +2119,12 @@ function renderUpdate(info) {
   $("currentVersion").textContent =
     info.current || $("currentVersion").textContent;
 
-  // 只有存在可信 DMG 时才显示下载按钮。
+  // 只有存在可信安装包时才显示下载按钮。
   if (info.available) {
     $("updateStatus").textContent =
       "发现新版本 " +
       info.latest +
-      (info.installer ? "，可直接下载安装包。" : "，但发布中暂无 DMG 安装包。");
+      (info.installer ? "，可直接下载安装包。" : "，但发布中暂无当前平台安装包。");
     $("downloadUpdate").hidden = !info.installer;
   } else {
     $("updateStatus").textContent = info.latest
@@ -2143,7 +2143,7 @@ $("downloadUpdate").onclick = () =>
   action(
     $("downloadUpdate"),
     () => api("update/download", {}),
-    "安装包已下载并打开，拖入“应用程序”即可完成升级。",
+    "安装包已下载并打开。",
   );
 api("version")
   .then((value) => {

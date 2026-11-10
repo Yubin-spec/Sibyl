@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Agents Calling",
+  "version": "0.5.0",
+  "identifier": "local.team.aibridge",
+  "build": {
+    "frontendDist": "../windows/frontend"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Agents Calling",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 760,
+        "minHeight": 560,
+        "resizable": true,
+        "center": true,
+        "url": "index.html"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Yubin-spec",
+    "category": "DeveloperTool",
+    "shortDescription": "Bridge original AI conversations across local coding tools.",
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "resources": {
+      "../runtime/windows/node.exe": "node.exe",
+      "../src/": "src/",
+      "../package.json": "package.json",
+      "../Node-LICENSE": "Node-LICENSE"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}
