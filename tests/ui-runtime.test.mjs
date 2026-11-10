@@ -68,7 +68,18 @@ test("control publishes a private runtime descriptor and removes it on shutdown"
     assert.equal(version.status, 200);
     assert.equal((await version.json()).version, runtime.version);
 
-    child.kill("SIGTERM");
+    // Windows 不能投递可捕获的 SIGTERM；走和桌面壳相同的认证关闭接口。
+    if (process.platform === "win32")
+      await fetch(url + "/api/shutdown", {
+        method: "POST",
+        headers: {
+          origin: url,
+          "x-bridge-ui": runtime.token,
+          "content-type": "application/json",
+        },
+        body: "{}",
+      });
+    else child.kill("SIGTERM");
     await waitForExit(child);
     await assert.rejects(readFile(runtimePath, "utf8"), { code: "ENOENT" });
   } finally {
