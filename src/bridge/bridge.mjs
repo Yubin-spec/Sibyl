@@ -1019,7 +1019,9 @@ export async function createBridge({
             controller.signal,
             selectedProject,
             agent,
-            { diagnostic },
+            // 远端任务始终按只读协作处理：Claude 可读文件但不能写，
+            // Codex/DeepSeek 使用只读沙箱，Cursor 使用 Ask 模式。
+            { diagnostic, readOnly: true },
           );
 
           // session 按 peer/room/agent/project 隔离，避免不同项目串上下文。

@@ -2,7 +2,7 @@
 
 在同一网络中的 Mac / Windows 之间连接 AI 编程工具，减少开发问题由人转述的步骤。也支持本机不同工具之间交流。
 
-当前版本 **0.5.0**。macOS 桌面端使用 Swift / AppKit / 系统 WebView；Windows 技术版使用 Tauri 2 / WebView2。桥接服务使用 Node.js，项目、讨论与核对线程使用 SQLite。无第三方 npm 依赖。
+当前版本 **0.5.1**。macOS 桌面端使用 Swift / AppKit / 系统 WebView；Windows 技术版使用 Tauri 2 / WebView2。桥接服务使用 Node.js，项目、讨论与核对线程使用 SQLite。无第三方 npm 依赖。
 
 下载安装包：[yubin-spec.github.io/Sibyl](https://yubin-spec.github.io/Sibyl/)（直达 GitHub Releases，无网盘或广告跳转）。App 的“设置 → 版本与更新”可直接检查并下载新版本。
 
@@ -32,6 +32,7 @@ Windows 安装包由 GitHub Actions 的 `Windows desktop technical build` 工作
 
 - 六个页面：会话、运行台、电脑、本机 AI、项目、设置。
 - 短码审批配对、同时连接多台电脑、双向状态同步和逐台撤销。
+- 接收项目可在接收服务运行中实时切换；未选项目时，用户显式开启“本机只读访问”后，远端 AI 仍可在只读范围内执行核对，不会修改本机文件。
 - 多项目专用 CLI 讨论与频道协作：固定轮数或 agent 自主对话，收件侧线不打断主任务，消息持久化、SSE 增量更新和定向取消。
 - 原 AI 会话内跨工具核对：在“本机 AI”配置项目 MCP 时一并绑定“询问方项目 + 目标工具 → 目标项目”。Agent 先调用 `bridge_open_session`，再用 `bridge_context` 查看已保存目标；需要核对时主动调用 `bridge_consult`，只传工具名即可在后台启动隔离的只读 Worker，并立即返回 `consultId`。未绑定才回退当前项目，不接管目标原聊天。
 - 核对线程与止损：同一来源会话续接同一 Worker 线程；精确重复请求复用原线程；由代码执行 10 分钟 12 次预算、同目标 2 个并发上限、3 分钟总时长、2 分钟无进展停止。App“运行台”显示路由、轮次、进展、结果与停止原因。

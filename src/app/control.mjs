@@ -27,7 +27,7 @@ import {
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomBytes, randomUUID } from "node:crypto";
-import { networkInterfaces, hostname } from "node:os";
+import { networkInterfaces, hostname, homedir } from "node:os";
 import {
   createBridge,
   detectAgents,
@@ -86,7 +86,7 @@ export async function createControl({
   detectStandalone = detectStandaloneAgents,
   runner = (prompt, session, signal, project, agent, options) =>
     agentRunner(agent, prompt, session, signal, project, options),
-  healthInterval = 15000,
+  healthInterval = 5000,
   consultLimits = {},
   onShutdown = null,
 } = {}) {
@@ -198,6 +198,10 @@ export async function createControl({
     desktopApps = detectDesktopApps(),
     toolsLoading = true,
     host = null,
+    // 接收服务当前绑定到哪个本机项目。host 启动后仍然允许实时切换；
+    // 未选择项目时，只有 hostReadOnly 为 true 才允许远端只读执行。
+    hostProject = null,
+    hostReadOnly = false,
     revision = 0,
     closed = false,
     saveQueue = Promise.resolve();
@@ -386,6 +390,9 @@ export async function createControl({
             code: host.pairing.code,
             port: host.port,
             project: host.project,
+            projectId: hostProject?.id || null,
+            projectName: hostProject?.name || null,
+            readOnly: hostReadOnly,
             requests: [...requests.values()],
             peers: Object.values(host.state.peers).map(
               ({ id, name, deviceId }) => ({ id, name, deviceId }),
@@ -524,10 +531,24 @@ export async function createControl({
         const h = await makeClient(c.url, c.token)("/health");
         const current = connections.get(id);
         if (!current) return h;
+        // 目录也跟随心跳刷新，避免用户在对端改了项目后本机还要手动重新打开页面。
+        // 旧版接收端没有 /catalog 时保持原有连接信息不变。
+        let catalog = null;
+        if (h.capabilities?.catalog) {
+          try {
+            catalog = await makeClient(c.url, c.token)("/catalog");
+          } catch {}
+        }
         Object.assign(current, {
           status: "online",
           agents: h.agents || {},
           legacy: !h.capabilities?.catalog,
+          ...(catalog
+            ? {
+                projects: catalog.projects || [],
+                sessions: catalog.sessions || [],
+              }
+            : {}),
           ...(h.device ? { name: h.device.name, deviceId: h.device.id } : {}),
         });
         if (h.device?.name && c.remoteName !== h.device.name) {
@@ -1084,6 +1105,20 @@ export async function createControl({
   };
 
   /**
+   * 返回“本机只读访问”对应的本地项目记录。
+   *
+   * 远端在未绑定项目时使用虚拟项目 ID；入站会话仍需要一个真实项目
+   * 记录来满足 workspace 的外键约束，因此按需创建一个只读根项目。
+   */
+  const readOnlyProject = () => {
+    const path = homedir(),
+      found = store
+        .snapshot()
+        .projects.find((p) => projectKey(p.path) === projectKey(path));
+    return found || store.saveProject({ name: "本机只读访问", path });
+  };
+
+  /**
    * 启动接收远端请求的桥接服务。
    *
    * 只有用户明确调用时才监听 0.0.0.0，端口限制在 1024-65535。
@@ -1095,7 +1130,7 @@ export async function createControl({
    */
   const startHost = async (body) => {
     if (host) throw Error("接收服务已经启动");
-    let project = body.projectId
+    hostProject = body.projectId
       ? store.getProject(body.projectId)
       : body.project
         ? store.saveProject({
@@ -1103,6 +1138,9 @@ export async function createControl({
             path: body.project,
           })
         : null;
+    // 项目是默认工作目录；用户明确开启后，才允许未绑定项目时在只读根目录执行。
+    hostReadOnly = body.allowReadOnly === true && !hostProject;
+    const runRoot = hostProject?.path || (hostReadOnly ? homedir() : null);
     const port = Number(body.port || store.snapshot().settings.networkPort);
     if (!Number.isInteger(port) || port < 1024 || port > 65535)
       throw Error("Invalid port");
@@ -1110,7 +1148,7 @@ export async function createControl({
     // bridge 负责远端协议、配对和接收 job；控制面只提供项目、工具和状态回调。
     const b = await createBridge({
       dir: join(dir, "host"),
-      project: project?.path,
+      project: runRoot,
       agents,
       device: device(),
 
@@ -1146,14 +1184,18 @@ export async function createControl({
       catalog: () => {
         const s = store.snapshot();
         const sessions = s.sessions.filter((s) => s.shared);
+        const projects = s.projects
+          .filter(
+            (p) =>
+              p.id === hostProject?.id ||
+              sessions.some((s) => s.projectId === p.id),
+          )
+          .map(({ id, name }) => ({ id, name }));
+        // 未绑定项目但用户开启了只读访问时，给远端一个明确可见的虚拟入口。
+        if (hostReadOnly && !hostProject)
+          projects.push({ id: "__host_readonly__", name: "本机只读访问" });
         return {
-          projects: s.projects
-            .filter(
-              (p) =>
-                p.id === project?.id ||
-                sessions.some((s) => s.projectId === p.id),
-            )
-            .map(({ id, name }) => ({ id, name })),
+          projects,
           sessions: sessions.map((s) => ({
             ...s,
             agent: s.tool,
@@ -1164,7 +1206,8 @@ export async function createControl({
       },
       resolveProject: (id) => {
         const s = store.snapshot();
-        return id === project?.id ||
+        if (id === "__host_readonly__" && hostReadOnly) return homedir();
+        return id === hostProject?.id ||
           s.sessions.some((s) => s.projectId === id && s.shared)
           ? store.getProject(id).path
           : null;
@@ -1194,7 +1237,12 @@ export async function createControl({
         const key = peer.id + ":" + conversation.id;
         let id = incoming.get(key);
         if (!id) {
-          const p = job.projectId ? store.getProject(job.projectId) : project;
+          const p =
+            job.projectId === "__host_readonly__"
+              ? readOnlyProject()
+              : job.projectId
+                ? store.getProject(job.projectId)
+                : hostProject;
           if (!p) throw Error("No incoming project");
           const s = store.registerSession({
             projectId: p.id,
@@ -1265,8 +1313,49 @@ export async function createControl({
       b.server.close();
       throw e;
     }
-    host = { ...b, port, project: project?.path };
+    host = { ...b, port, project: runRoot };
     changed();
+  };
+
+  /**
+   * 实时切换接收服务当前项目。
+   *
+   * 过去的实现把项目固定在 host 启动瞬间，导致用户已经在界面上选了项目，
+   * 已运行的接收服务仍然拿旧目录执行。这里直接调用 bridge.setProject，
+   * 新请求立即使用新目录；未选项目时则需要用户显式开启只读访问。
+   */
+  const setHostProject = async (body) => {
+    if (!host) throw Error("先启动接收服务");
+    const next = body.projectId ? store.getProject(body.projectId) : null;
+    const readOnly = body.allowReadOnly === true && !next;
+    if (!next && !readOnly)
+      throw Error("请选择项目，或开启未选项目时的本机只读访问");
+    const root = next?.path || homedir();
+    await host.setProject(root);
+    hostProject = next;
+    hostReadOnly = readOnly;
+    host.project = root;
+    changed();
+    return {
+      ok: true,
+      projectId: next?.id || null,
+      projectName: next?.name || null,
+      readOnly,
+    };
+  };
+
+  /**
+   * 停止接收服务，保留配对记录，方便用户重新绑定项目后立即启动。
+   */
+  const stopHost = async () => {
+    if (!host) throw Error("接收服务未启动");
+    host.cancel();
+    await new Promise((resolveClose) => host.server.close(resolveClose));
+    host = null;
+    hostProject = null;
+    hostReadOnly = false;
+    changed();
+    return { ok: true };
   };
 
   /**
@@ -1655,6 +1744,8 @@ export async function createControl({
           throw Error("Stop conversation first");
         result = store.updateConversation(body.id, { status: "archived" });
       } else if (path === "/api/host/start") await startHost(body);
+      else if (path === "/api/host/project") result = await setHostProject(body);
+      else if (path === "/api/host/stop") result = await stopHost();
       else if (path === "/api/host/rotate") {
         if (!host) throw Error("先启动接收服务");
         result = { code: host.pairing.rotate() };

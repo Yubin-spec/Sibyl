@@ -28,3 +28,100 @@ test('app-only tool connection writes the desktop config',{skip:process.platform
 });
 test('local peer uses its selected project and diagnostics identify their agent on failure',async()=>{const calls=[];const f=await fixture({runner:async(prompt,session,signal,project,agent,options)=>{calls.push({project,agent});if(options?.diagnostic)throw Error('diagnostic failure');return {session_id:agent+'-session',result:'ok'};}});try{const {mkdir}=await import('node:fs/promises');await mkdir(join(f.dir,'peer'));const a=await f.call('/api/projects/save',{name:'A',path:f.dir}),b=await f.call('/api/projects/save',{name:'B',path:join(f.dir,'peer')});const c=await f.call('/api/conversations/create',{title:'A to B',projectId:a.id,remoteProjectId:b.id,localAgent:'codex',remoteAgent:'claude',connectionId:'local',rounds:1});await f.call('/api/conversations/run',{id:c.id,goal:'go'});for(let i=0;i<100;i++){if((await f.call('/api/status')).operations.every(o=>o.status!=='running'))break;await new Promise(r=>setTimeout(r,10));}assert.equal(calls.find(c=>c.agent==='claude').project,b.path);assert.equal((await f.call('/api/status')).sessions.find(s=>s.id==='remote-'+c.id).projectId,b.id);await f.call('/api/tools/diagnose',{projectId:a.id,agent:'codex'});for(let i=0;i<100;i++){if((await f.call('/api/status')).operation.status!=='running')break;await new Promise(r=>setTimeout(r,10));}const op=(await f.call('/api/status')).operation;assert.equal(op.agent,'codex');assert.equal(op.status,'failed');assert.match(op.output,/diagnostic failure/);}finally{await f.close();}});
 test('stopping a local phase does not stop another conversation remote job',async()=>{let releaseRemote;const remoteGate=new Promise(r=>releaseRemote=r);const b=await fixture({runner:async()=>{await remoteGate;return {session_id:'remote',result:'remote answer'};}});const a=await fixture({runner:async(prompt,session,signal)=>{if(prompt==='hold locally')await new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(Error('cancelled')),{once:true}));return {session_id:'local',result:'local answer'};}});try{const net=await import('node:net'),{mkdir}=await import('node:fs/promises');const probe=net.createServer();await new Promise(r=>probe.listen(0,'127.0.0.1',r));const port=probe.address().port;await new Promise(r=>probe.close(r));await b.call('/api/host/start',{project:b.dir,port});const bs=await b.call('/api/status');await a.call('/api/pair',{url:`http://127.0.0.1:${port}`,code:bs.host.code});let pending;for(let i=0;i<100;i++){pending=await b.call('/api/status');if(pending.host.requests.length)break;await new Promise(r=>setTimeout(r,10));}await b.call('/api/host/approve',{id:pending.host.requests[0].id,accept:true});let state;for(let i=0;i<100;i++){state=await a.call('/api/status');if(state.connections.length&&state.operation.status!=='running')break;await new Promise(r=>setTimeout(r,10));}const connectionId=state.connections[0].id;await mkdir(join(a.dir,'other'));const pa=await a.call('/api/projects/save',{name:'local hold',path:a.dir}),pb=await a.call('/api/projects/save',{name:'remote active',path:join(a.dir,'other')});const ca=await a.call('/api/conversations/create',{title:'A',projectId:pa.id,localAgent:'codex',remoteAgent:'claude',connectionId,rounds:1}),cb=await a.call('/api/conversations/create',{title:'B',projectId:pb.id,localAgent:'codex',remoteAgent:'claude',connectionId,rounds:1});await a.call('/api/conversations/run',{id:ca.id,goal:'hold locally'});await a.call('/api/conversations/run',{id:cb.id,goal:'go remote'});for(let i=0;i<100;i++){if((await b.call('/api/status')).conversations.some(c=>c.status==='running'))break;await new Promise(r=>setTimeout(r,10));}await a.call('/api/conversations/stop',{id:ca.id});releaseRemote();for(let i=0;i<100;i++){state=await a.call('/api/status');if(state.operations.every(o=>o.status!=='running'))break;await new Promise(r=>setTimeout(r,10));}assert.equal(state.operations.find(o=>o.conversationId===ca.id).status,'cancelled');assert.equal(state.operations.find(o=>o.conversationId===cb.id).status,'completed');}finally{releaseRemote();await a.close();await b.close();}});
+test('host project changes apply live and unbound read-only mode can still run the remote agent', async () => {
+  const calls = [];
+  const b = await fixture({
+    runner: async (prompt, session, signal, project, agent, options) => {
+      calls.push({ project, agent, options });
+      return { session_id: 'remote-session', result: 'remote ok' };
+    },
+  });
+  const { homedir } = await import('node:os');
+  const net = await import('node:net');
+  const freePort = async () => {
+    const probe = net.createServer();
+    await new Promise((r) => probe.listen(0, '127.0.0.1', r));
+    const port = probe.address().port;
+    await new Promise((r) => probe.close(r));
+    return port;
+  };
+  try {
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(join(b.dir, 'second'));
+    const p1 = await b.call('/api/projects/save', { name: 'one', path: b.dir });
+    const p2 = await b.call('/api/projects/save', {
+      name: 'two',
+      path: join(b.dir, 'second'),
+    });
+    const port = await freePort();
+    await b.call('/api/host/start', { projectId: p1.id, port });
+    assert.equal((await b.call('/api/status')).host.projectId, p1.id);
+
+    // 已启动的接收服务必须实时接受新项目，而不是继续使用启动时的旧目录。
+    await b.call('/api/host/project', { projectId: p2.id });
+    let status = await b.call('/api/status');
+    assert.equal(status.host.projectId, p2.id);
+    assert.equal(status.host.projectName, 'two');
+
+    const request = await (
+      await fetch(`http://127.0.0.1:${port}/pair/start`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code: status.host.code, name: 'test peer' }),
+      })
+    ).json();
+    await b.call('/api/host/approve', { id: request.id, accept: true });
+    const approval = await (
+      await fetch(`http://127.0.0.1:${port}/pair/result`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(request),
+      })
+    ).json();
+    const auth = { authorization: 'Bearer ' + approval.token };
+    const catalog = await (
+      await fetch(`http://127.0.0.1:${port}/catalog`, { headers: auth })
+    ).json();
+    assert.deepEqual(catalog.projects, [{ id: p2.id, name: 'two' }]);
+
+    // 不选项目时必须显式开启只读访问；开启后远端仍能拿到虚拟入口并执行任务。
+    await b.call('/api/host/stop', {});
+    await b.call('/api/host/start', { allowReadOnly: true, port });
+    status = await b.call('/api/status');
+    assert.equal(status.host.readOnly, true);
+    assert.equal(status.host.projectId, null);
+    const readOnlyCatalog = await (
+      await fetch(`http://127.0.0.1:${port}/catalog`, { headers: auth })
+    ).json();
+    assert.deepEqual(readOnlyCatalog.projects, [
+      { id: '__host_readonly__', name: '本机只读访问' },
+    ]);
+
+    const id = 'read-only-job';
+    const turn = await fetch(`http://127.0.0.1:${port}/turn`, {
+      method: 'POST',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id,
+        room: 'read-only',
+        agent: 'codex',
+        projectId: '__host_readonly__',
+        prompt: '检查本机项目',
+      }),
+    });
+    assert.equal(turn.status, 202, await turn.text());
+    let job;
+    for (let i = 0; i < 100; i++) {
+      job = await (
+        await fetch(`http://127.0.0.1:${port}/jobs/${id}`, { headers: auth })
+      ).json();
+      if (job.status !== 'running') break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.equal(job.status, 'completed', job.error);
+    assert.equal(calls.at(-1).project, homedir());
+    assert.equal(calls.at(-1).options.readOnly, true);
+  } finally {
+    await b.close();
+  }
+});

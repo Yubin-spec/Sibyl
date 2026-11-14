@@ -540,7 +540,7 @@ async function handle(message) {
           ? message.params.protocolVersion
           : "2025-06-18",
         capabilities: { tools: {} },
-        serverInfo: { name: "ai-bridge", version: "0.5.0" },
+        serverInfo: { name: "ai-bridge", version: "0.5.1" },
         instructions:
           "Agents Calling is available. Stay within the human-approved task. When a task touches a module owned by another AI tool, a cross-project contract, or needs cross-tool verification, call bridge_context before deciding whether to communicate; it works before bridge_open_session and does not register a session. Do not call the bridge merely because it exists. If the MCP host runs this server outside the active workspace, such as DeepSeek Harness, pass projectPath as the current workspace to bridge_context and bridge_open_session. If the context shows a useful target and communication is warranted, call bridge_open_session once, then bridge_consult with that tool; do not ask the human to relay. The bridge routes by saved project binding, starts an isolated read-only Worker, and returns consultId immediately. Keep the consultId and use bridge_consult_result; never resubmit. Use bridge_consult_stop only for that Worker. For explicitly registered original conversations on paired computers, use bridge_list_peers, bridge_list_sessions, bridge_ask, bridge_receive, and bridge_reply. The Worker is never the target original chat.",
       };

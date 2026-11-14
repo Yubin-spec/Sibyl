@@ -1,6 +1,6 @@
 {
   "name": "agents-calling",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "Agents Calling: macOS desktop bridge for collaboration between AI coding tools",
   "type": "module",

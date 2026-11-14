@@ -1197,7 +1197,16 @@ function renderComputers() {
   const host = state.host;
   $("hosting").hidden = !host;
   $("hostStart").hidden = !!host;
+  $("hostStop").hidden = !host;
   if (host) {
+    // 接收服务运行中仍然允许切换项目；选择会立即写到 bridge，不需要重启。
+    $("hostProject").value = host.projectId || "";
+    $("hostReadOnly").checked = !!host.readOnly;
+    $("hostProjectStatus").textContent = host.readOnly
+      ? "当前：本机只读访问（未绑定项目，远端可读取但不可修改）"
+      : host.projectName
+        ? "当前项目：" + host.projectName
+        : "当前未绑定项目：只能配对，不能执行远端 AI。";
     $("pairCode").textContent = host.code || "等待生成";
     changed("addresses", [state.addresses, host.port], () => {
       $("addresses").replaceChildren(
@@ -1217,6 +1226,9 @@ function renderComputers() {
         ),
       );
     });
+  } else {
+    $("hostProjectStatus").textContent =
+      "启动前选择项目；未选项目时需要显式开启只读访问。";
   }
   changed("requests", host?.requests, () => {
     $("requests").replaceChildren();
@@ -1319,9 +1331,32 @@ $("hostStart").onclick = () =>
   action($("hostStart"), () =>
     api("host/start", {
       projectId: $("hostProject").value || undefined,
+      allowReadOnly: $("hostReadOnly").checked,
       port: Number(state.settings?.networkPort) || undefined,
     }),
   );
+$("hostStop").onclick = () =>
+  action($("hostStop"), () => api("host/stop", {}));
+
+/**
+ * 接收服务运行时，项目/只读权限变化立即推送到 bridge。
+ *
+ * 这里不再要求用户退出 App；bridge.setProject 会在没有运行中 job 时切换目录。
+ */
+const syncHostProject = () => {
+  if (!state.host) return;
+  action(
+    $("hostProject"),
+    () =>
+      api("host/project", {
+        projectId: $("hostProject").value || undefined,
+        allowReadOnly: $("hostReadOnly").checked,
+      }),
+    "接收项目已实时更新。",
+  );
+};
+$("hostProject").onchange = syncHostProject;
+$("hostReadOnly").onchange = syncHostProject;
 $("rotate").onclick = () => action($("rotate"), () => api("host/rotate", {}));
 
 /**
@@ -1816,6 +1851,15 @@ function renderTarget() {
       "请先添加项目",
     );
     $("catalogHint").textContent = "本机工具之间联络，无需配对自己的电脑。";
+    $("remoteProject").required = true;
+  } else if (Array.isArray(c?.projects)) {
+    // 心跳会把对端 /catalog 同步到 connection；不需要重新打开页面或手动刷新。
+    options(
+      "remoteProject",
+      c.projects.map((p) => [p.id, p.name]),
+      "对方没有分享项目",
+    );
+    $("catalogHint").textContent = "只显示对方允许发现的项目。";
     $("remoteProject").required = true;
   } else if (catalogKey === id && catalog) {
     options(
